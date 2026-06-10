@@ -4,7 +4,7 @@
 [![license](https://img.shields.io/npm/l/@solomonneas/code-search-mcp.svg)](./LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue)](https://modelcontextprotocol.io)
 
-Read-only MCP server for [code-search-api](https://github.com/solomonneas/code-search-api). It lets Claude Desktop, Claude Code, OpenClaw, Hermes Agent, Codex CLI, and any MCP-compatible client query a local codebase by intent through a running code-search-api service.
+Read-only MCP server for [code-search-api](https://github.com/escoffier-labs/code-search-api). It lets Claude Desktop, Claude Code, OpenClaw, Hermes Agent, Codex CLI, and any MCP-compatible client query a local codebase by intent through a running code-search-api service.
 
 `code-search-mcp` talks to the FastAPI service over HTTP and uses stdio for MCP transport. It does not index, delete, backfill, or mutate the code-search-api database.
 
@@ -24,7 +24,7 @@ npm install -g @solomonneas/code-search-mcp
 Or from source:
 
 ```bash
-git clone https://github.com/solomonneas/code-search-api.git
+git clone https://github.com/escoffier-labs/code-search-api.git
 cd code-search-api/mcp
 npm install
 npm run build

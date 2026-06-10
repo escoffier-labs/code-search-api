@@ -81,7 +81,7 @@ docker run --rm -p 5204:5204 \
   -v /path/to/your/code:/workspace:ro \
   -v code-search-data:/data \
   --add-host host.docker.internal:host-gateway \
-  ghcr.io/solomonneas/code-search-api:latest
+  ghcr.io/escoffier-labs/code-search-api:latest
 ```
 
 A `docker-compose.yml` is included at the repo root for a more typical deployment shape.
@@ -89,7 +89,7 @@ A `docker-compose.yml` is included at the repo root for a more typical deploymen
 ### Option C — run from source
 
 ```bash
-git clone https://github.com/solomonneas/code-search-api.git
+git clone https://github.com/escoffier-labs/code-search-api.git
 cd code-search-api
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .

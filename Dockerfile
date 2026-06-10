@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir build && python -m build --wheel
 
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.source="https://github.com/solomonneas/code-search-api"
+LABEL org.opencontainers.image.source="https://github.com/escoffier-labs/code-search-api"
 LABEL org.opencontainers.image.description="Local semantic code search with Ollama embeddings and SQLite"
 LABEL org.opencontainers.image.licenses="MIT"
 

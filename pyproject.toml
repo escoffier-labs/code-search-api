@@ -32,9 +32,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/solomonneas/code-search-api"
-Repository = "https://github.com/solomonneas/code-search-api"
-Issues = "https://github.com/solomonneas/code-search-api/issues"
+Homepage = "https://github.com/escoffier-labs/code-search-api"
+Repository = "https://github.com/escoffier-labs/code-search-api"
+Issues = "https://github.com/escoffier-labs/code-search-api/issues"
 
 [project.scripts]
 code-search-api = "code_search_api.cli:main"

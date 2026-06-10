@@ -1,6 +1,6 @@
 services:
   code-search-api:
-    image: ghcr.io/solomonneas/code-search-api:latest
+    image: ghcr.io/escoffier-labs/code-search-api:latest
     container_name: code-search-api
     restart: unless-stopped
     ports:

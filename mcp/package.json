@@ -30,12 +30,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/solomonneas/code-search-api.git",
+    "url": "git+https://github.com/escoffier-labs/code-search-api.git",
     "directory": "mcp"
   },
-  "homepage": "https://github.com/solomonneas/code-search-api/tree/main/mcp#readme",
+  "homepage": "https://github.com/escoffier-labs/code-search-api/tree/main/mcp#readme",
   "bugs": {
-    "url": "https://github.com/solomonneas/code-search-api/issues"
+    "url": "https://github.com/escoffier-labs/code-search-api/issues"
   },
   "keywords": [
     "mcp",
