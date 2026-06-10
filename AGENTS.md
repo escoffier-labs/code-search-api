@@ -3,6 +3,14 @@
 Read this entire file before changing anything. Every rule is binding.
 
 ## Definition of Done
+```
+./scripts/verify
+```
+It runs the `mcp/` gates (`npm run typecheck`, `npm test`, `npm run build`)
+and the Python check (throwaway-venv `pip install -e .`, `code-search-api
+--help`, and a loopback serve smoke test against a throwaway
+`CODE_SEARCH_DB`, never port 5204).
+
 A change may be reported complete only when every applicable check below has
 been run and passed. Report the actual results. If anything fails, report the
 failure verbatim and do not claim success.

@@ -1,0 +1,60 @@
+#!/bin/bash
+# Single verification entrypoint. AGENTS.md's Definition of Done defers to
+# this file, so the gate lives in exactly one place.
+#
+# Gates, in order:
+#   1. mcp/: npm run typecheck, npm test, npm run build
+#   2. Python: pip install -e . into a throwaway venv, code-search-api --help,
+#      then a serve smoke test on 127.0.0.1 with a throwaway CODE_SEARCH_DB.
+#      Never touches the live 5204 instance or any real database.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# --- 1. mcp/ gates -----------------------------------------------------------
+(
+  cd mcp
+  npm run typecheck
+  npm test
+  npm run build
+)
+
+# --- 2. Python gate ----------------------------------------------------------
+TMPDIR_VERIFY=$(mktemp -d)
+SERVE_PID=""
+cleanup() {
+  if [ -n "$SERVE_PID" ] && kill -0 "$SERVE_PID" 2>/dev/null; then
+    kill "$SERVE_PID" 2>/dev/null || true
+    wait "$SERVE_PID" 2>/dev/null || true
+  fi
+  rm -rf "$TMPDIR_VERIFY"
+}
+trap cleanup EXIT
+
+python3 -m venv "$TMPDIR_VERIFY/venv"
+"$TMPDIR_VERIFY/venv/bin/pip" install --quiet -e .
+"$TMPDIR_VERIFY/venv/bin/code-search-api" --help >/dev/null
+
+# Serve smoke test: throwaway DB, loopback only, never port 5204.
+PORT=$("$TMPDIR_VERIFY/venv/bin/python" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+CODE_SEARCH_DB="$TMPDIR_VERIFY/verify.db" \
+  "$TMPDIR_VERIFY/venv/bin/code-search-api" serve \
+  --host 127.0.0.1 --port "$PORT" --log-level warning \
+  >"$TMPDIR_VERIFY/serve.log" 2>&1 &
+SERVE_PID=$!
+
+for _ in $(seq 1 50); do
+  if curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+    echo "serve smoke test: ok (port $PORT, throwaway DB)"
+    exit 0
+  fi
+  if ! kill -0 "$SERVE_PID" 2>/dev/null; then
+    echo "serve smoke test: server exited early" >&2
+    cat "$TMPDIR_VERIFY/serve.log" >&2
+    exit 1
+  fi
+  sleep 0.2
+done
+
+echo "serve smoke test: health endpoint never came up" >&2
+cat "$TMPDIR_VERIFY/serve.log" >&2
+exit 1
