@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-search-api"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local semantic code search with Ollama embeddings, SQLite, and hybrid search."
 readme = "README.md"
 requires-python = ">=3.10"
