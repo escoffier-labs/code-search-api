@@ -79,7 +79,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_serve = sub.add_parser("serve", help="Start the FastAPI search server.")
-    p_serve.add_argument("--host", default=os.environ.get("CODE_SEARCH_HOST", "0.0.0.0"))
+    p_serve.add_argument("--host", default=os.environ.get("CODE_SEARCH_HOST", "127.0.0.1"))
     p_serve.add_argument("--port", type=int, default=int(os.environ.get("CODE_SEARCH_PORT", "5204")))
     p_serve.add_argument("--reload", action="store_true", help="Enable autoreload (dev only).")
     p_serve.add_argument("--log-level", default="info")

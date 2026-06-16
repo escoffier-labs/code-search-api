@@ -470,15 +470,45 @@ app.add_middleware(
 
 
 
-def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key"), token: str | None = None) -> None:
+def _supplied_api_key(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> str | None:
+    """Extract the API key from request headers only.
+
+    Accepts ``X-API-Key: <key>`` or ``Authorization: Bearer <key>``. The key is
+    never read from a query parameter, which would leak it into URLs and logs.
+    """
+    if x_api_key:
+        return x_api_key
+    if authorization:
+        scheme, _, credentials = authorization.partition(" ")
+        if scheme.lower() == "bearer" and credentials:
+            return credentials.strip()
+    return None
+
+
+def require_api_key(supplied: str | None = Depends(_supplied_api_key)) -> None:
+    """Auth for read-only endpoints: open when no key is configured."""
     if not CODE_SEARCH_API_KEY:
         return
-    supplied = x_api_key or token
+    if supplied != CODE_SEARCH_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+def require_api_key_strict(supplied: str | None = Depends(_supplied_api_key)) -> None:
+    """Auth for mutating endpoints: fail closed when no key is configured."""
+    if not CODE_SEARCH_API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="Set CODE_SEARCH_API_KEY to use mutating endpoints",
+        )
     if supplied != CODE_SEARCH_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 protected_api = APIRouter(dependencies=[Depends(require_api_key)])
+mutating_api = APIRouter(dependencies=[Depends(require_api_key_strict)])
 
 
 def _index_job_already_running_response() -> dict[str, Any]:
@@ -796,19 +826,28 @@ def perform_index(summarize: bool = True) -> dict[str, Any]:
     }
 
 
-@protected_api.post("/api/index")
+@mutating_api.post("/api/index")
 def index_all(background_tasks: BackgroundTasks, summarize: bool = True) -> dict[str, Any]:
     if not index_lock.acquire(blocking=False):
         return _index_job_already_running_response()
 
-    index_job_status.update({
-        "status": "indexing",
-        "message": "Indexing started in background",
-        "started_at": time.time(),
-        "finished_at": None,
-        "last_result": None,
-    })
-    background_tasks.add_task(_run_index_job, summarize)
+    # Once the background task is scheduled, _run_index_job releases the lock in
+    # its finally block. But if anything between acquiring the lock and handing
+    # off to the background task raises, that finally never runs, so release the
+    # lock here to avoid leaking it forever.
+    try:
+        index_job_status.update({
+            "status": "indexing",
+            "message": "Indexing started in background",
+            "started_at": time.time(),
+            "finished_at": None,
+            "last_result": None,
+        })
+        background_tasks.add_task(_run_index_job, summarize)
+    except BaseException:
+        index_lock.release()
+        raise
+
     return {
         "status": "indexing",
         "message": "Indexing started in background",
@@ -816,7 +855,7 @@ def index_all(background_tasks: BackgroundTasks, summarize: bool = True) -> dict
     }
 
 
-@protected_api.post("/api/backfill-summaries")
+@mutating_api.post("/api/backfill-summaries")
 def backfill_summaries(limit: int = 100, project: Optional[str] = None) -> dict[str, Any]:
     """Backfill summaries for chunks that have code embeddings but no summary yet."""
     with closing(get_conn()) as conn:
@@ -980,3 +1019,4 @@ def summary_stats() -> dict[str, Any]:
 
 
 app.include_router(protected_api)
+app.include_router(mutating_api)
