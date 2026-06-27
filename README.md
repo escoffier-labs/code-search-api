@@ -28,39 +28,6 @@ Embeddings run locally through Ollama by default. Summaries can run locally too,
 - Searches code vectors, summary vectors, or a weighted hybrid of both
 - Exposes a small FastAPI service for local tools and agent workflows
 
-## How It Works
-
-```
-Your code repos
-      │
-      ▼
- File discovery ──► Language-aware chunking (Python, TS, Go, Rust, etc.)
-      │
-      ├──► Embedding via Ollama ──► packed float32 vectors in SQLite
-      │
-      └──► LLM summarization ──► summary + summary embedding in SQLite
-                                        │
-                                        ▼
-                              FastAPI search endpoint
-                                        │
-                              ┌─────────┴─────────┐
-                              │                   │
-                        Code vectors      Summary vectors
-                              │                   │
-                              └────── weighted ────┘
-                                        │
-                                        ▼
-                              Hybrid ranked results
-```
-
-1. **Chunking**: Files are split at logical boundaries (function/class definitions, not arbitrary line counts). Python, TypeScript, JavaScript, Go, Rust, Markdown, and config files are all handled with language-specific patterns.
-
-2. **Embedding**: Each chunk is embedded with your chosen Ollama model and stored as packed float32 BLOBs in SQLite. No vector database required.
-
-3. **Summarization**: An LLM generates a 1-2 sentence summary per chunk describing what the code *does*, not just what it *contains*. The summary gets its own embedding vector.
-
-4. **Hybrid search**: Queries match against both code embeddings (35% weight) and summary embeddings (65% weight). This means searching "authentication flow" finds auth code even if the word "authentication" never appears in variable names.
-
 ## Quick Start
 
 ### Option A — install from PyPI
@@ -106,6 +73,39 @@ curl -s -X POST http://localhost:5204/api/search \
   -H "Content-Type: application/json" \
   -d '{"query": "rate limiting middleware", "mode": "hybrid"}'
 ```
+
+## How It Works
+
+```
+Your code repos
+      │
+      ▼
+ File discovery ──► Language-aware chunking (Python, TS, Go, Rust, etc.)
+      │
+      ├──► Embedding via Ollama ──► packed float32 vectors in SQLite
+      │
+      └──► LLM summarization ──► summary + summary embedding in SQLite
+                                        │
+                                        ▼
+                              FastAPI search endpoint
+                                        │
+                              ┌─────────┴─────────┐
+                              │                   │
+                        Code vectors      Summary vectors
+                              │                   │
+                              └────── weighted ────┘
+                                        │
+                                        ▼
+                              Hybrid ranked results
+```
+
+1. **Chunking**: Files are split at logical boundaries (function/class definitions, not arbitrary line counts). Python, TypeScript, JavaScript, Go, Rust, Markdown, and config files are all handled with language-specific patterns.
+
+2. **Embedding**: Each chunk is embedded with your chosen Ollama model and stored as packed float32 BLOBs in SQLite. No vector database required.
+
+3. **Summarization**: An LLM generates a 1-2 sentence summary per chunk describing what the code *does*, not just what it *contains*. The summary gets its own embedding vector.
+
+4. **Hybrid search**: Queries match against both code embeddings (35% weight) and summary embeddings (65% weight). This means searching "authentication flow" finds auth code even if the word "authentication" never appears in variable names.
 
 ## Embedding Models
 
