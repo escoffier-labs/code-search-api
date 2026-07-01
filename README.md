@@ -9,11 +9,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI">
-  <img src="https://img.shields.io/badge/Ollama-local--first-000000?style=for-the-badge" alt="Ollama local-first">
-  <img src="https://img.shields.io/badge/SQLite-vector_store-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite vector store">
-  <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT license">
+  <img src="https://shieldcn.dev/badge/python-3.10%2B-3776AB.svg?logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://shieldcn.dev/badge/FastAPI-009688.svg?logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://shieldcn.dev/badge/Ollama-local--first-000000.svg" alt="Ollama local-first">
+  <img src="https://shieldcn.dev/badge/SQLite-vector_store-003B57.svg?logo=sqlite&logoColor=white" alt="SQLite vector store">
+  <img src="https://shieldcn.dev/badge/license-MIT-green.svg" alt="MIT license">
 </p>
 
 Code Search API indexes your codebase, stores local embeddings in SQLite, and lets you search by intent instead of exact text. It is built for agents, developer dashboards, and CLI workflows that need fast answers across real repositories.
