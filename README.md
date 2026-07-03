@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/code-search-api-banner.jpg" alt="Code Search API banner">
+  <img src="docs/assets/code-search-api-social-preview.jpg" alt="Code Search API social preview">
 </p>
 
 <h1 align="center">Code Search API</h1>
@@ -9,6 +9,8 @@
 </p>
 
 <p align="center">
+  <img src="https://shieldcn.dev/badge/repo-escoffier--labs%2Fcode--search--api-181717.svg?logo=github&logoColor=white" alt="Repo escoffier-labs/code-search-api">
+  <img src="https://shieldcn.dev/badge/default_branch-main-181717.svg?logo=github&logoColor=white" alt="Default branch main">
   <img src="https://shieldcn.dev/badge/python-3.10%2B-3776AB.svg?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://shieldcn.dev/badge/FastAPI-009688.svg?logo=fastapi&logoColor=white" alt="FastAPI">
   <img src="https://shieldcn.dev/badge/Ollama-local--first-000000.svg" alt="Ollama local-first">
@@ -16,11 +18,13 @@
   <img src="https://shieldcn.dev/badge/license-MIT-green.svg" alt="MIT license">
 </p>
 
+<!-- proof: curl search transcript lands here; spec in the plating gallery -->
+
+## What it does
+
 Code Search API indexes your codebase, stores local embeddings in SQLite, and lets you search by intent instead of exact text. It is built for agents, developer dashboards, and CLI workflows that need fast answers across real repositories.
 
 Embeddings run locally through Ollama by default. Summaries can run locally too, or use Ollama Cloud models when you want better code explanations without wiring up another model provider.
-
-## What It Does
 
 - Splits source files with language-aware chunking instead of arbitrary line windows
 - Embeds chunks with Ollama and stores packed float32 vectors in SQLite
@@ -28,9 +32,22 @@ Embeddings run locally through Ollama by default. Summaries can run locally too,
 - Searches code vectors, summary vectors, or a weighted hybrid of both
 - Exposes a small FastAPI service for local tools and agent workflows
 
-## Quick Start
+## Try it in 60 seconds
 
-### Option A — install from PyPI
+```bash
+git clone https://github.com/escoffier-labs/code-search-api.git
+cd code-search-api
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+code-search-api --help
+```
+
+This validates the package entry point from source. Pull an embedding model and set `CODE_SEARCH_WORKSPACE` before indexing a real repository.
+
+## Install and run
+
+### Option A - install from PyPI
 
 ```bash
 pipx install code-search-api          # or: pip install code-search-api
@@ -40,7 +57,7 @@ code-search-api index                  # first-time index
 code-search-api serve                  # http://localhost:5204
 ```
 
-### Option B — Docker
+### Option B - Docker
 
 ```bash
 docker run --rm -p 5204:5204 \
@@ -53,7 +70,7 @@ docker run --rm -p 5204:5204 \
 
 A `docker-compose.yml` is included at the repo root for a more typical deployment shape.
 
-### Option C — run from source
+### Option C - run from source
 
 ```bash
 git clone https://github.com/escoffier-labs/code-search-api.git
@@ -106,6 +123,14 @@ Your code repos
 3. **Summarization**: An LLM generates a 1-2 sentence summary per chunk describing what the code *does*, not just what it *contains*. The summary gets its own embedding vector.
 
 4. **Hybrid search**: Queries match against both code embeddings (35% weight) and summary embeddings (65% weight). This means searching "authentication flow" finds auth code even if the word "authentication" never appears in variable names.
+
+## Why not ripgrep, hosted code search, or a vector database?
+
+Use ripgrep or IDE search when you know the exact symbol, string, or file. Use Code Search API when the query is behavioral, such as "authentication flow", and the matching code may not contain the same words. Use a hosted code search product when you want a managed remote index. Use a separate vector database when you need distributed storage or vector infrastructure beyond a local SQLite file.
+
+## What code-search-api is not
+
+Code Search API is not a hosted SaaS, not a replacement for exact text search, not a general-purpose vector database, and not a security scanner or static analyzer. It is a local FastAPI service and CLI for indexing repositories with Ollama embeddings, optional code summaries, and hybrid semantic search.
 
 ## Embedding Models
 
@@ -258,7 +283,7 @@ CODE_SEARCH_SUMMARY_MODEL=qwen3:32b                  # local, needs ~20GB VRAM
 
 | Script | Purpose |
 |--------|---------|
-| `run-index.py` | CLI indexer for first-time or batch re-indexing |
+| `code-search-api index` | CLI indexer for first-time or batch re-indexing |
 | `index-then-summarize.sh` | Full pipeline: index new chunks, then summarize |
 | `backup-db.sh` | Rotated SQLite backup (configurable retention) |
 
