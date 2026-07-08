@@ -41,6 +41,8 @@ DB_BATCH_SIZE = int(os.environ.get("CODE_SEARCH_DB_BATCH_SIZE", "100"))
 CACHE_TTL_SECONDS = int(os.environ.get("CODE_SEARCH_CACHE_TTL_SECONDS", "3600"))
 ALLOWED_ORIGINS = [origin.strip() for origin in os.environ.get("CODE_SEARCH_CORS_ORIGINS", "*").split(",") if origin.strip()]
 CODE_SEARCH_API_KEY = os.environ.get("CODE_SEARCH_API_KEY")
+ARTIFACT_KINDS = {"embedding", "summary", "summary_embedding"}
+EMBED_MODEL_META_KEY = "embed_model"
 
 index_lock = Lock()
 index_job_status: dict[str, Any] = {
@@ -165,7 +167,246 @@ def migrate_db() -> None:
             conn.execute("ALTER TABLE chunks ADD COLUMN chunk_type TEXT DEFAULT 'block'")
         if "summary_model" not in cols:
             conn.execute("ALTER TABLE chunks ADD COLUMN summary_model TEXT")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS artifact_cache (
+                content_hash TEXT NOT NULL,
+                model TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('embedding', 'summary', 'summary_embedding')),
+                value BLOB NOT NULL,
+                created_at REAL NOT NULL,
+                PRIMARY KEY (content_hash, model, kind)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS files (
+                file_path TEXT PRIMARY KEY,
+                file_hash TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                mtime REAL NOT NULL,
+                indexed_at REAL NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
         conn.commit()
+
+
+def _get_meta(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def _set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO meta (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value
+        """,
+        (key, value),
+    )
+
+
+def _allow_embed_model_change() -> bool:
+    return os.environ.get("CODE_SEARCH_ALLOW_MODEL_CHANGE") == "1"
+
+
+def _ensure_embed_model(conn: sqlite3.Connection) -> bool:
+    """Stamp the DB's embedding model and refuse accidental model changes."""
+    stored_model = _get_meta(conn, EMBED_MODEL_META_KEY)
+    if stored_model is None:
+        _set_meta(conn, EMBED_MODEL_META_KEY, EMBED_MODEL)
+        return False
+    if stored_model == EMBED_MODEL:
+        return False
+    if not _allow_embed_model_change():
+        raise RuntimeError(
+            "Refusing to index with configured embed model "
+            f"'{EMBED_MODEL}' because the database has stored embed model "
+            f"'{stored_model}'. Set CODE_SEARCH_ALLOW_MODEL_CHANGE=1 to "
+            "re-stamp the database and re-index with the configured model."
+        )
+    _set_meta(conn, EMBED_MODEL_META_KEY, EMBED_MODEL)
+    return True
+
+
+def _file_hash_from_bytes(data: bytes) -> str:
+    return hashlib.md5(data).hexdigest()
+
+
+def _upsert_file_metadata(
+    conn: sqlite3.Connection,
+    file_path: str,
+    file_hash: str,
+    size: int,
+    mtime: float,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO files (file_path, file_hash, size, mtime, indexed_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(file_path) DO UPDATE SET
+            file_hash=excluded.file_hash,
+            size=excluded.size,
+            mtime=excluded.mtime,
+            indexed_at=excluded.indexed_at
+        """,
+        (file_path, file_hash, size, mtime, time.time()),
+    )
+
+
+def _artifact_cache_get(
+    conn: sqlite3.Connection,
+    content_hash: str,
+    model: str,
+    kind: str,
+) -> bytes | None:
+    if kind not in ARTIFACT_KINDS:
+        raise ValueError(f"Unknown artifact kind: {kind}")
+    row = conn.execute(
+        "SELECT value FROM artifact_cache WHERE content_hash = ? AND model = ? AND kind = ?",
+        (content_hash, model, kind),
+    ).fetchone()
+    return row["value"] if row else None
+
+
+def _artifact_cache_upsert(
+    conn: sqlite3.Connection,
+    content_hash: str,
+    model: str,
+    kind: str,
+    value: bytes,
+) -> None:
+    if kind not in ARTIFACT_KINDS:
+        raise ValueError(f"Unknown artifact kind: {kind}")
+    conn.execute(
+        """
+        INSERT INTO artifact_cache (content_hash, model, kind, value, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(content_hash, model, kind) DO UPDATE SET
+            value=excluded.value,
+            created_at=excluded.created_at
+        """,
+        (content_hash, model, kind, value, time.time()),
+    )
+
+
+def _summary_model_candidates() -> list[str]:
+    return list(dict.fromkeys([SUMMARY_MODEL_PRIMARY, SUMMARY_MODEL_FALLBACK]))
+
+
+def _get_cached_summary(
+    conn: sqlite3.Connection,
+    content_hash: str,
+) -> tuple[str, str] | None:
+    for model in _summary_model_candidates():
+        value = _artifact_cache_get(conn, content_hash, model, "summary")
+        if value is not None:
+            return (value.decode("utf-8"), model)
+    return None
+
+
+def _embedding_blob_for_content(
+    conn: sqlite3.Connection,
+    content_hash: str,
+    content: str,
+    kind: str,
+) -> bytes | None:
+    cached = _artifact_cache_get(conn, content_hash, EMBED_MODEL, kind)
+    if cached is not None:
+        return cached
+
+    emb = embed_text(content)
+    if not emb:
+        return None
+
+    emb_blob = pack_embedding(emb)
+    _artifact_cache_upsert(conn, content_hash, EMBED_MODEL, kind, emb_blob)
+    return emb_blob
+
+
+def _summary_artifacts_for_content(
+    conn: sqlite3.Connection,
+    content_hash: str,
+    content: str,
+    file_path: str,
+) -> tuple[str, bytes | None, str] | None:
+    cached = _get_cached_summary(conn, content_hash)
+    if cached is not None:
+        summary, provider = cached
+    else:
+        result = summarize_chunk(content, file_path)
+        if not result:
+            return None
+        summary, provider = result
+        _artifact_cache_upsert(conn, content_hash, provider, "summary", summary.encode("utf-8"))
+
+    sum_emb_blob = _embedding_blob_for_content(conn, content_hash, summary, "summary_embedding")
+    return (summary, sum_emb_blob, provider)
+
+
+def backfill_artifact_cache_from_chunks() -> dict[str, int]:
+    """Populate artifact_cache from existing chunk artifact columns."""
+    counts = {"embedding": 0, "summary": 0, "summary_embedding": 0}
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT content_hash, embedding, summary, summary_embedding, summary_model
+            FROM chunks
+            WHERE embedding IS NOT NULL
+               OR summary IS NOT NULL
+               OR summary_embedding IS NOT NULL
+            """
+        ).fetchall()
+
+        for row in rows:
+            if row["embedding"] is not None:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO artifact_cache (content_hash, model, kind, value, created_at)
+                    VALUES (?, ?, 'embedding', ?, ?)
+                    ON CONFLICT(content_hash, model, kind) DO NOTHING
+                    """,
+                    (row["content_hash"], EMBED_MODEL, row["embedding"], time.time()),
+                )
+                counts["embedding"] += cursor.rowcount
+
+            if row["summary"] is not None:
+                summary_model = row["summary_model"] or SUMMARY_MODEL_PRIMARY
+                cursor = conn.execute(
+                    """
+                    INSERT INTO artifact_cache (content_hash, model, kind, value, created_at)
+                    VALUES (?, ?, 'summary', ?, ?)
+                    ON CONFLICT(content_hash, model, kind) DO NOTHING
+                    """,
+                    (
+                        row["content_hash"],
+                        summary_model,
+                        row["summary"].encode("utf-8"),
+                        time.time(),
+                    ),
+                )
+                counts["summary"] += cursor.rowcount
+
+            if row["summary_embedding"] is not None:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO artifact_cache (content_hash, model, kind, value, created_at)
+                    VALUES (?, ?, 'summary_embedding', ?, ?)
+                    ON CONFLICT(content_hash, model, kind) DO NOTHING
+                    """,
+                    (row["content_hash"], EMBED_MODEL, row["summary_embedding"], time.time()),
+                )
+                counts["summary_embedding"] += cursor.rowcount
+
+        conn.commit()
+
+    counts["total"] = sum(counts.values())
+    return counts
 
 
 # ─── Ollama helpers ─────────────────────────────────────────────────────────
@@ -570,13 +811,18 @@ def health():
             summary_embedded = conn.execute(
                 "SELECT COUNT(*) as c FROM chunks WHERE summary_embedding IS NOT NULL"
             ).fetchone()["c"]
+            file_count = conn.execute("SELECT COUNT(*) as c FROM files").fetchone()["c"]
+            stored_embed_model = _get_meta(conn, EMBED_MODEL_META_KEY)
         return {
             "status": "ok",
             "version": "2.0.1",
             "chunks": count,
+            "files": file_count,
             "embedded": embedded,
             "summarized": summarized,
             "summary_embedded": summary_embedded,
+            "stored_embed_model": stored_embed_model,
+            "configured_embed_model": EMBED_MODEL,
             "query_cache_size": len(query_embed_cache),
         }
     except Exception as e:
@@ -666,15 +912,29 @@ def perform_index(summarize: bool = True) -> dict[str, Any]:
     files = collect_files()
     new_chunks = 0
     skipped = 0
+    files_new = 0
+    files_changed = 0
+    files_skipped = 0
+    files_refreshed = 0
     embedded = 0
     summarized = 0
     failed = 0
+    model_changed = False
     t0 = time.time()
 
     with closing(get_conn()) as conn:
+        model_changed = _ensure_embed_model(conn)
+        conn.commit()
+
         existing = {
             (row["file_path"], row["chunk_index"]): row["content_hash"]
             for row in conn.execute("SELECT file_path, chunk_index, content_hash FROM chunks").fetchall()
+        }
+        tracked_files = {
+            row["file_path"]: row
+            for row in conn.execute(
+                "SELECT file_path, file_hash, size, mtime, indexed_at FROM files"
+            ).fetchall()
         }
 
         current_file_paths = {rel_path for _, rel_path, _ in files}
@@ -683,10 +943,12 @@ def perform_index(summarize: bool = True) -> dict[str, Any]:
         stale_tail_chunks_pruned = 0
 
         all_db_files = {row[0] for row in conn.execute("SELECT DISTINCT file_path FROM chunks").fetchall()}
+        all_db_files.update(tracked_files.keys())
         deleted_files = all_db_files - current_file_paths
         for deleted_file in deleted_files:
             cursor = conn.execute("DELETE FROM chunks WHERE file_path = ?", (deleted_file,))
             orphan_chunks_removed += cursor.rowcount
+            conn.execute("DELETE FROM files WHERE file_path = ?", (deleted_file,))
             orphan_files_count += 1
         conn.commit()
 
@@ -715,11 +977,41 @@ def perform_index(summarize: bool = True) -> dict[str, Any]:
             pending_upserts.clear()
 
         for project, rel_path, abs_path in files:
+            path = Path(abs_path)
             try:
-                content = Path(abs_path).read_text(encoding="utf-8", errors="replace")
+                stat = path.stat()
+            except OSError:
+                continue
+
+            stored_file = tracked_files.get(rel_path)
+            if (
+                not model_changed
+                and stored_file
+                and stored_file["size"] == stat.st_size
+                and stored_file["mtime"] == stat.st_mtime
+            ):
+                files_skipped += 1
+                continue
+
+            try:
+                data = path.read_bytes()
             except Exception:
                 continue
 
+            file_hash = _file_hash_from_bytes(data)
+            if not model_changed and stored_file and stored_file["file_hash"] == file_hash:
+                _upsert_file_metadata(conn, rel_path, file_hash, stat.st_size, stat.st_mtime)
+                conn.commit()
+                files_skipped += 1
+                files_refreshed += 1
+                continue
+
+            if stored_file:
+                files_changed += 1
+            else:
+                files_new += 1
+
+            content = data.decode("utf-8", errors="replace")
             chunks = chunk_file(content, rel_path)
             cursor = conn.execute(
                 "DELETE FROM chunks WHERE file_path = ? AND chunk_index >= ?",
@@ -731,12 +1023,11 @@ def perform_index(summarize: bool = True) -> dict[str, Any]:
                 chunk_hash = hashlib.md5(chunk_content.encode()).hexdigest()
                 key = (rel_path, i)
 
-                if key in existing and existing[key] == chunk_hash:
+                if not model_changed and key in existing and existing[key] == chunk_hash:
                     skipped += 1
                     continue
 
-                emb = embed_text(chunk_content)
-                emb_blob = pack_embedding(emb) if emb else None
+                emb_blob = _embedding_blob_for_content(conn, chunk_hash, chunk_content, "embedding")
                 pending_upserts.append((
                     rel_path,
                     project,
@@ -751,26 +1042,31 @@ def perform_index(summarize: bool = True) -> dict[str, Any]:
                 if len(pending_upserts) >= DB_BATCH_SIZE:
                     flush_upserts()
 
-                if emb:
+                if emb_blob:
                     embedded += 1
                     if summarize:
-                        pending_summaries.append((rel_path, i, chunk_content))
+                        pending_summaries.append((rel_path, i, chunk_hash, chunk_content))
                 else:
                     failed += 1
 
+            _upsert_file_metadata(conn, rel_path, file_hash, stat.st_size, stat.st_mtime)
+
         flush_upserts()
+        conn.commit()
 
         if summarize and pending_summaries:
             print(f"Pass 2: Summarizing {len(pending_summaries)} chunks with {SUMMARY_WORKERS} workers...")
 
             def _summarize_and_embed(item):
-                rel_path, chunk_idx, chunk_content = item
+                rel_path, chunk_idx, chunk_hash, chunk_content = item
                 try:
-                    result = summarize_chunk(chunk_content, rel_path)
+                    with closing(get_conn()) as worker_conn:
+                        result = _summary_artifacts_for_content(
+                            worker_conn, chunk_hash, chunk_content, rel_path
+                        )
+                        worker_conn.commit()
                     if result:
-                        summary, provider = result
-                        sum_emb = embed_text(summary)
-                        sum_emb_blob = pack_embedding(sum_emb) if sum_emb else None
+                        summary, sum_emb_blob, provider = result
                         return (summary, sum_emb_blob, provider, rel_path, chunk_idx)
                 except Exception as e:
                     print(f"Summary failed for {rel_path}[{chunk_idx}]: {e}")
@@ -804,6 +1100,10 @@ def perform_index(summarize: bool = True) -> dict[str, Any]:
             flush_summary_updates()
 
     print(
+        f"Files: {files_new} new, {files_changed} changed, "
+        f"{files_skipped} skipped ({files_refreshed} metadata refreshed)"
+    )
+    print(
         f"Cleanup: removed {orphan_chunks_removed} orphan chunks from {orphan_files_count} deleted files, "
         f"{stale_tail_chunks_pruned} stale tail chunks"
     )
@@ -812,6 +1112,11 @@ def perform_index(summarize: bool = True) -> dict[str, Any]:
     clear_embedding_caches()
     return {
         "files_found": len(files),
+        "files_new": files_new,
+        "files_changed": files_changed,
+        "files_skipped": files_skipped,
+        "files_refreshed": files_refreshed,
+        "model_changed": model_changed,
         "new_chunks": new_chunks,
         "skipped_unchanged": skipped,
         "embedded": embedded,
@@ -867,7 +1172,7 @@ def backfill_summaries(limit: int = 100, project: Optional[str] = None) -> dict[
         params.append(limit)
 
         rows = conn.execute(
-            f"SELECT id, file_path, content FROM chunks {where} LIMIT ?", params
+            f"SELECT id, file_path, content, content_hash FROM chunks {where} LIMIT ?", params
         ).fetchall()
 
         updated = 0
@@ -876,11 +1181,16 @@ def backfill_summaries(limit: int = 100, project: Optional[str] = None) -> dict[
 
         def _backfill_one(row):
             try:
-                result = summarize_chunk(row["content"], row["file_path"])
+                with closing(get_conn()) as worker_conn:
+                    result = _summary_artifacts_for_content(
+                        worker_conn,
+                        row["content_hash"],
+                        row["content"],
+                        row["file_path"],
+                    )
+                    worker_conn.commit()
                 if result:
-                    summary, provider = result
-                    sum_emb = embed_text(summary)
-                    sum_emb_blob = pack_embedding(sum_emb) if sum_emb else None
+                    summary, sum_emb_blob, provider = result
                     return (summary, sum_emb_blob, provider, row["id"])
             except Exception as e:
                 print(f"Backfill failed for {row['file_path']}: {e}")

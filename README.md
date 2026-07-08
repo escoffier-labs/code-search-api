@@ -164,6 +164,7 @@ CODE_SEARCH_EMBED_MODEL=qwen3-embedding:8b
 ```
 
 > **Note:** Changing the embedding model after indexing requires a full re-index since vector dimensions and similarity spaces differ between models.
+> The indexer refuses accidental model changes. Set `CODE_SEARCH_ALLOW_MODEL_CHANGE=1` only when you intend to re-stamp the database and re-index with the configured embedding model.
 
 ## Summary Models
 
@@ -273,6 +274,7 @@ CODE_SEARCH_SUMMARY_MODEL=qwen3:32b                  # local, needs ~20GB VRAM
 | `CODE_SEARCH_CORS_ORIGINS` | `*` | Comma-separated CORS origins |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama API base URL |
 | `CODE_SEARCH_EMBED_MODEL` | `qwen3-embedding:8b` | Embedding model |
+| `CODE_SEARCH_ALLOW_MODEL_CHANGE` | *(unset)* | Set to `1` to allow re-stamping an existing DB after changing embedding models |
 | `CODE_SEARCH_SUMMARY_MODEL` | `qwen3-coder-next:cloud` | Primary summarization model |
 | `CODE_SEARCH_SUMMARY_FALLBACK` | `qwen3-coder-next:cloud` | Fallback summarization model |
 | `CODE_SEARCH_SUMMARY_WORKERS` | `4` | Parallel summary generation workers |
