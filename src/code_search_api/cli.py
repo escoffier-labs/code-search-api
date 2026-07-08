@@ -70,6 +70,16 @@ def _summarize(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cache_backfill(args: argparse.Namespace) -> int:
+    from .server import backfill_artifact_cache_from_chunks, init_db, migrate_db
+
+    init_db()
+    migrate_db()
+    result = backfill_artifact_cache_from_chunks()
+    print(json.dumps(result, indent=2), flush=True)
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="code-search-api",
@@ -95,6 +105,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sum.add_argument("--project", default=None, help="Only summarize chunks under this project.")
     p_sum.add_argument("--once", action="store_true", help="Run a single batch and stop.")
     p_sum.set_defaults(func=_summarize)
+
+    p_cache = sub.add_parser("cache", help="Manage the content-addressed artifact cache.")
+    cache_sub = p_cache.add_subparsers(dest="cache_command", required=True)
+    p_cache_backfill = cache_sub.add_parser(
+        "backfill",
+        help="Populate artifact_cache from existing chunk artifacts.",
+    )
+    p_cache_backfill.set_defaults(func=_cache_backfill)
 
     return parser
 
