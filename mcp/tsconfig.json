@@ -13,8 +13,7 @@
     "sourceMap": true,
     "outDir": "dist",
     "rootDir": ".",
-    "types": ["node"],
-    "ignoreDeprecations": "6.0"
+    "types": ["node"]
   },
   "include": ["src/**/*", "tests/**/*"],
   "exclude": ["node_modules", "dist"]
