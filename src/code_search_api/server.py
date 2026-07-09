@@ -31,9 +31,11 @@ OLLAMA_BASE = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_EMBED_URL = f"{OLLAMA_BASE}/api/embed"
 EMBED_MODEL = os.environ.get("CODE_SEARCH_EMBED_MODEL", "qwen3-embedding:8b")
 
-# Ollama models for summaries
-SUMMARY_MODEL_PRIMARY = os.environ.get("CODE_SEARCH_SUMMARY_MODEL", "qwen3-coder-next:cloud")
-SUMMARY_MODEL_FALLBACK = os.environ.get("CODE_SEARCH_SUMMARY_FALLBACK", "qwen3-coder-next:cloud")
+# Ollama models for summaries. Non-thinking models only: the chat call caps
+# num_predict at 200, and a thinking model spends that budget on reasoning
+# tokens and returns empty content (qwen3-coder-next is also being retired).
+SUMMARY_MODEL_PRIMARY = os.environ.get("CODE_SEARCH_SUMMARY_MODEL", "gemma4:31b-cloud")
+SUMMARY_MODEL_FALLBACK = os.environ.get("CODE_SEARCH_SUMMARY_FALLBACK", "devstral-2:123b-cloud")
 
 # Parallel summary config
 SUMMARY_WORKERS = int(os.environ.get("CODE_SEARCH_SUMMARY_WORKERS", "4"))
