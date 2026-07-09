@@ -126,9 +126,12 @@ def _sqlite_cosine_sim(blob_a: bytes | None, blob_b: bytes | None) -> float | No
 
 
 def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    # timeout: concurrent writers (index job + summary backfill) must wait for
+    # the WAL write lock instead of failing with "database is locked".
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.create_function("cosine_sim", 2, _sqlite_cosine_sim, deterministic=True)
     return conn
 
