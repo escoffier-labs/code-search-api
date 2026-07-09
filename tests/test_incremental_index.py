@@ -200,3 +200,25 @@ def test_embed_model_override_restamps_and_proceeds(server_module, monkeypatch):
             "SELECT value FROM meta WHERE key = 'embed_model'"
         ).fetchone()["value"]
     assert stored == "other-embed"
+
+
+def test_workspace_change_does_not_prune_out_of_scope_projects(server_module, monkeypatch, tmp_path):
+    """A scan scoped to a different workspace must never delete other projects."""
+    _write_project_file(server_module, "demo/app.py", "def keep():\n    return 1\n")
+    _install_fake_embed(monkeypatch, server_module)
+    server_module.perform_index(summarize=False)
+
+    roster = tmp_path / "roster"
+    (roster / "newproj").mkdir(parents=True)
+    (roster / "newproj" / "new.py").write_text("def fresh():\n    return 2\n", encoding="utf-8")
+    monkeypatch.setattr(server_module, "WORKSPACE", roster)
+
+    result = server_module.perform_index(summarize=False)
+
+    assert result["cleanup"]["orphan_files_count"] == 0
+    assert result["cleanup"]["orphan_chunks_removed"] == 0
+    with closing(server_module.get_conn()) as conn:
+        demo_chunks = conn.execute(
+            "SELECT COUNT(*) AS c FROM chunks WHERE file_path LIKE 'demo/%'"
+        ).fetchone()["c"]
+    assert demo_chunks == 1

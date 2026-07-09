@@ -668,17 +668,26 @@ def should_skip_dir(name: str) -> bool:
     return name in SKIP_DIRS or name.startswith(".")
 
 
-def collect_files() -> list[tuple[str, str, str]]:
-    """Returns list of (project, relative_path, absolute_path)."""
-    files = []
+def scan_project_dirs() -> list[tuple[str, Path, Path]]:
+    """Returns list of (project, project_dir, base_dir) under the scan roots."""
+    projects = []
     scan_roots = [WORKSPACE]
     if REFERENCE_DIR and REFERENCE_DIR.exists():
         scan_roots.append(REFERENCE_DIR)
     for base_dir in scan_roots:
+        if not base_dir.exists():
+            continue
         for project_dir in sorted(base_dir.iterdir()):
             if not project_dir.is_dir() or project_dir.name.startswith("."):
                 continue
-            project = project_dir.name
+            projects.append((project_dir.name, project_dir, base_dir))
+    return projects
+
+
+def collect_files() -> list[tuple[str, str, str]]:
+    """Returns list of (project, relative_path, absolute_path)."""
+    files = []
+    for project, project_dir, base_dir in scan_project_dirs():
             for root, dirs, filenames in os.walk(project_dir):
                 dirs[:] = [d for d in dirs if not should_skip_dir(d)]
                 for fname in filenames:
@@ -946,7 +955,18 @@ def perform_index(summarize: bool = True) -> dict[str, Any]:
 
         all_db_files = {row[0] for row in conn.execute("SELECT DISTINCT file_path FROM chunks").fetchall()}
         all_db_files.update(tracked_files.keys())
-        deleted_files = all_db_files - current_file_paths
+        # Prune only within project directories present in this scan. A scan is
+        # scoped by CODE_SEARCH_WORKSPACE; files from projects outside the
+        # scanned roots are not "deleted", they are simply out of scope, and
+        # removing them would wipe the rest of the index whenever the
+        # workspace changes. Directories (not collected files) define the
+        # scope so a project whose files were all deleted still prunes.
+        scanned_projects = {project for project, _, _ in scan_project_dirs()}
+        deleted_files = {
+            path
+            for path in all_db_files - current_file_paths
+            if path.split("/", 1)[0] in scanned_projects
+        }
         for deleted_file in deleted_files:
             cursor = conn.execute("DELETE FROM chunks WHERE file_path = ?", (deleted_file,))
             orphan_chunks_removed += cursor.rowcount
