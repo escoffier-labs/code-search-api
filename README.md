@@ -1,49 +1,48 @@
 <p align="center">
-  <img src="docs/assets/code-search-api-social-preview.jpg" alt="Code Search API social preview">
+  <img src="docs/assets/code-search-api-social-preview.jpg" alt="Code Search API banner" width="900">
 </p>
 
 <h1 align="center">Code Search API</h1>
 
 <p align="center">
-  <strong>Local semantic code search powered by Ollama embeddings and SQLite.</strong>
+  <img src="docs/assets/marks/code-search-api-circle.svg" alt="" width="40" height="40">
 </p>
 
 <p align="center">
-  <img src="https://shieldcn.dev/badge/repo-escoffier--labs%2Fcode--search--api-181717.svg?logo=github&logoColor=white" alt="Repo escoffier-labs/code-search-api">
-  <img src="https://shieldcn.dev/badge/default_branch-main-181717.svg?logo=github&logoColor=white" alt="Default branch main">
-  <img src="https://shieldcn.dev/badge/python-3.10%2B-3776AB.svg?logo=python&logoColor=white" alt="Python 3.10+">
-  <img src="https://shieldcn.dev/badge/FastAPI-009688.svg?logo=fastapi&logoColor=white" alt="FastAPI">
-  <img src="https://shieldcn.dev/badge/Ollama-local--first-000000.svg" alt="Ollama local-first">
-  <img src="https://shieldcn.dev/badge/SQLite-vector_store-003B57.svg?logo=sqlite&logoColor=white" alt="SQLite vector store">
+  <strong>Search code by intent, on your machine.</strong>
+</p>
+
+<p align="center">
+  Local semantic code search with Ollama embeddings, language-aware chunking, SQLite vectors, and hybrid search. FastAPI for agents and tools. Optional GraphTrail blend for structure plus similarity.
+</p>
+
+<p align="center">
+  <a href="#try-it-in-60-seconds">Quickstart</a> &middot; <a href="#install">Install</a> &middot; <a href="https://brigade.tools/graphtrail">GraphTrail</a>
+</p>
+
+<p align="center">
+  <img src="https://shieldcn.dev/github/ci/escoffier-labs/code-search-api.svg?branch=main&workflow=ci.yml" alt="CI status">
   <img src="https://shieldcn.dev/badge/license-MIT-green.svg" alt="MIT license">
 </p>
 
-<!-- proof: curl search transcript lands here; spec in the plating gallery -->
+## Install
+
+```bash
+# see repo docs for full local setup with Ollama
+git clone https://github.com/escoffier-labs/code-search-api.git
+cd code-search-api
+# follow README install for venv + Ollama model pull
+```
 
 ## What it does
 
-Code Search API indexes your codebase, stores local embeddings in SQLite, and lets you search by intent instead of exact text. It is built for agents, developer dashboards, and CLI workflows that need fast answers across real repositories.
+| | Job | What you get |
+|---|---|---|
+| **Chunk** | Language-aware splits | Not arbitrary line windows |
+| **Embed** | Local Ollama vectors | Stored as float32 in SQLite |
+| **Search** | Intent, not exact text | Code, summary, or hybrid ranking |
+| **Serve** | Small FastAPI surface | Agents and CLIs query locally |
 
-Embeddings run locally through Ollama by default. Summaries can run locally too, or use Ollama Cloud models when you want better code explanations without wiring up another model provider.
-
-- Splits source files with language-aware chunking instead of arbitrary line windows
-- Embeds chunks with Ollama and stores packed float32 vectors in SQLite
-- Generates optional LLM summaries per chunk for higher-quality intent search
-- Searches code vectors, summary vectors, or a weighted hybrid of both
-- Exposes a small FastAPI service for local tools and agent workflows
-
-## Try it in 60 seconds
-
-```bash
-git clone https://github.com/escoffier-labs/code-search-api.git
-cd code-search-api
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-code-search-api --help
-```
-
-This validates the package entry point from source. Pull an embedding model and set `CODE_SEARCH_WORKSPACE` before indexing a real repository.
 
 ## Install and run
 
