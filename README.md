@@ -91,6 +91,19 @@ curl -s -X POST http://localhost:5204/api/search \
   -d '{"query": "rate limiting middleware", "mode": "hybrid"}'
 ```
 
+## MCP Server
+
+The read-only MCP server and OpenClaw plugin live in [`mcp/`](./mcp) at
+`@solomonneas/code-search-mcp` version 0.2.0. The standalone
+`escoffier-labs/code-search-mcp` repository is deprecated in favor of this
+directory.
+
+```bash
+cd mcp
+npm install
+npm run build
+```
+
 ## How It Works
 
 ```

@@ -1,19 +1,28 @@
-# code-search-mcp
+<p align="center">
+  <img src="docs/assets/code-search-mcp-social-preview.jpg" alt="code-search-mcp banner" width="900">
+</p>
 
-[![npm version](https://img.shields.io/npm/v/@solomonneas/code-search-mcp.svg)](https://www.npmjs.com/package/@solomonneas/code-search-mcp)
-[![license](https://img.shields.io/npm/l/@solomonneas/code-search-mcp.svg)](./LICENSE)
-[![MCP](https://img.shields.io/badge/MCP-compatible-blue)](https://modelcontextprotocol.io)
+<h1 align="center">code-search-mcp</h1>
 
-Read-only MCP server for [code-search-api](https://github.com/escoffier-labs/code-search-api). It lets Claude Desktop, Claude Code, OpenClaw, Hermes Agent, Codex CLI, and any MCP-compatible client query a local codebase by intent through a running code-search-api service.
+<p align="center">
+  <strong>Read-only MCP server that lets any MCP client query a local codebase by intent through code-search-api.</strong>
+</p>
 
-`code-search-mcp` talks to the FastAPI service over HTTP and uses stdio for MCP transport. It does not index, delete, backfill, or mutate the code-search-api database.
+<p align="center">
+  <img src="https://shieldcn.dev/github/ci/escoffier-labs/code-search-api.svg?branch=main&workflow=ci.yml" alt="CI status">
+  <img src="https://shieldcn.dev/npm/@solomonneas/code-search-mcp.svg" alt="npm version">
+  <img src="https://shieldcn.dev/badge/language-TypeScript-blue.svg" alt="TypeScript">
+  <img src="https://shieldcn.dev/badge/license-MIT-green.svg" alt="MIT license">
+</p>
 
-## Tools
+Run intent search over your local code index without giving the MCP server write access to the index.
 
-- `search_code` - semantic search over the indexed workspace. Supports `mode` (`hybrid`, `code`, `summary`), `project`, `limit`, and `min_score`.
-- `list_projects` - project names and chunk, embedding, and summary counts from `/api/projects`.
-- `code_search_stats` - chunk type, per-project coverage, and summary model coverage from `/api/stats` and `/api/summary-stats`.
-- `health` - readiness and index counters from `/health`.
+<!-- proof: inspector tools/list + one real query recording lands here; spec in the plating gallery -->
+
+## What it does
+
+`code-search-mcp` is a read-only MCP server and shell CLI for querying a running [code-search-api](https://github.com/escoffier-labs/code-search-api) service by intent. It exists so MCP-compatible desktop, CLI, and gateway clients can search a local semantic code index through a small stdio server instead of calling the HTTP API directly. It differs from a standalone indexer because this package only exposes search, project listing, stats, and health checks over read-only HTTP endpoints, while code-search-api owns indexing, embeddings, summaries, and storage. The MCP server uses stdio for transport, and the same package also ships a read-only `code-search` command for scripts, shells, cron, and CI.
+
 
 ## Install
 
@@ -30,6 +39,28 @@ npm install
 npm run build
 ```
 
+## Tools
+
+- `search_code` - semantic search over the indexed workspace. Supports `mode` (`hybrid`, `code`, `summary`), `project`, `limit`, `min_score`, `response_format`, `include_content`, and `max_content_chars`.
+- `list_projects` - project names and chunk, embedding, and summary counts from `/api/projects`.
+- `code_search_stats` - chunk type, per-project coverage, and summary model coverage from `/api/stats` and `/api/summary-stats`.
+- `health` - readiness and index counters from `/health`.
+
+`search_code` response formats:
+
+| Format | Description |
+|--------|-------------|
+| `raw` | The unmodified code-search-api `/api/search` response. This is the default. |
+| `compact` | Keeps scores, file path, project, chunk metadata, summary, and optional trimmed content preview. |
+| `by_file` | Groups compact matches by `file_path` and surfaces each file's best score. |
+
+Example prompts:
+
+- "Find the FastAPI route that handles semantic code search."
+- "Where is API key authentication enforced?"
+- "List likely files involved in summary backfills, grouped by file."
+- "Search only the `code-search-api` project for embedding cache logic."
+
 ## Configuration
 
 Start code-search-api first:
@@ -45,9 +76,9 @@ Set these environment variables in your MCP client config:
 | `CODE_SEARCH_API_URL` | no | `http://localhost:5204` | Base URL for the running code-search-api service |
 | `CODE_SEARCH_API_KEY` | no | - | Optional API key sent as `X-API-Key` when the FastAPI service requires it |
 
-### Claude Desktop
+### Generic MCP JSON config
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+Add a server entry to an MCP client config:
 
 ```json
 {
@@ -63,16 +94,18 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 }
 ```
 
-### Claude Code
+### Launcher argument shape
 
-```bash
-claude mcp add code-search \
-  --env CODE_SEARCH_API_URL=http://localhost:5204 \
-  --env CODE_SEARCH_API_KEY=your-api-key-here \
-  -- code-search-mcp
+For clients that expose a shell registration command, map the server command and environment variables to that command's syntax:
+
+```text
+server name: code-search
+command: code-search-mcp
+env: CODE_SEARCH_API_URL=http://localhost:5204
+env: CODE_SEARCH_API_KEY=your-api-key-here
 ```
 
-Add `--scope user` to make it available from any directory instead of only the current project.
+Add a user or global scope flag if your launcher supports one.
 
 ### OpenClaw
 
@@ -108,9 +141,9 @@ systemctl --user restart openclaw-gateway
 openclaw mcp list   # confirm "code-search" is registered
 ```
 
-### Hermes Agent
+### YAML MCP config
 
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) reads MCP config from `~/.hermes/config.yaml` under the `mcp_servers` key. Add an entry:
+For clients that read YAML config under an `mcp_servers` key, add an entry:
 
 ```yaml
 mcp_servers:
@@ -133,37 +166,44 @@ mcp_servers:
       CODE_SEARCH_API_KEY: "your-api-key-here"
 ```
 
-Then reload MCP from inside a Hermes session:
+Some YAML-driven clients expose a reload command after config changes:
 
 ```
 /reload-mcp
 ```
 
-### Codex CLI
+## CLI
 
-[Codex CLI](https://github.com/openai/codex) registers MCP servers via `codex mcp add`:
-
-```bash
-codex mcp add code-search \
-  --env CODE_SEARCH_API_URL=http://localhost:5204 \
-  --env CODE_SEARCH_API_KEY=your-api-key-here \
-  -- code-search-mcp
-```
-
-Or, when running from a source checkout:
+The same package ships a read-only **search tool**, `code-search`, for shells, cron, and CI. It talks to the same local `code-search-api`.
 
 ```bash
-codex mcp add code-search \
-  --env CODE_SEARCH_API_URL=http://localhost:5204 \
-  --env CODE_SEARCH_API_KEY=your-api-key-here \
-  -- node /absolute/path/to/code-search-api/mcp/dist/index.js
+npx @solomonneas/code-search-mcp@latest search "where is auth configured" --limit 5
+# or, installed globally, simply:
+code-search search "where is auth configured"
+code-search projects
+code-search stats
+code-search health        # exit 1 if the API is not ok (cron-friendly)
+code-search --json stats  # raw JSON for piping
 ```
 
-Codex writes the entry to `~/.codex/config.toml` under `[mcp_servers.code-search]`. Verify with:
+Run `code-search help` for the full flag list. Configure with `CODE_SEARCH_API_URL` (default `http://localhost:5204`) and optional `CODE_SEARCH_API_KEY`.
 
-```bash
-codex mcp list
-```
+### Starting the MCP server
+
+`code-search mcp` (or the back-compat `code-search-mcp` bin) starts the stdio MCP server. If a launcher referenced the file path `dist/index.js` directly, point it at `dist/mcp-bin.js` (or `dist/cli.js mcp`); launchers that use the `code-search-mcp` bin name need no change.
+
+## Why not grep, GitHub code search, or IDE search?
+
+**grep/ripgrep:** use them when you know the exact token, symbol, or file path. `code-search-mcp` is for intent searches where a summary, related wording, or cross-file match is more useful than exact text.
+
+**GitHub code search:** use it for hosted repositories, review links, and searches that benefit from GitHub's index. `code-search-mcp` talks to a local code-search-api service, so it can query whatever that service indexed without depending on a hosted repository search surface.
+
+**IDE search:** use it while editing in one workspace. `code-search-mcp` is useful when an MCP client, script, or gateway needs the same search capability outside the editor.
+
+## What code-search-mcp is not
+
+`code-search-mcp` is not an indexer, crawler, backfill runner, embedding worker, or database maintenance tool. It does not delete, mutate, rebuild, or write to the code-search-api index. It is also not a hosted search product or a replacement for exact text search when exact text is the right tool.
+
 
 ## Development
 
@@ -172,7 +212,26 @@ npm install
 npm run typecheck
 npm test
 npm run build
+npm run smoke       # requires a live code-search-api service
+npm run pack:dry-run
 ```
+
+## Release
+
+The release script verifies the package, optionally smoke-tests against a live service, publishes to npm, packs the exact npm artifact into `/tmp`, extracts it, and publishes that extracted package to ClawHub with source provenance pointing at this repo.
+
+```bash
+scripts/release.sh --publish
+```
+
+Set `SKIP_SMOKE=1` if no local code-search-api service is available during release.
+
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for notable changes, including the draft-07
+`$schema` strip fix, the move under
+`escoffier-labs/code-search-api/tree/main/mcp`, and the `scripts/verify`
+entrypoint.
 
 ## License
 

@@ -1,6 +1,6 @@
 {
   "name": "@solomonneas/code-search-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Read-only MCP server and OpenClaw plugin for querying a local code-search-api index by intent.",
   "type": "module",
   "main": "dist/index.cjs",
@@ -14,16 +14,20 @@
     }
   },
   "bin": {
-    "code-search-mcp": "dist/index.js"
+    "code-search": "dist/cli.js",
+    "code-search-mcp": "dist/mcp-bin.js"
   },
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json",
     "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
+    "start": "node dist/cli.js mcp",
+    "smoke": "tsx scripts/smoke.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
+    "pack:dry-run": "npm pack --dry-run",
+    "release": "scripts/release.sh",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "author": "Solomon Neas",
