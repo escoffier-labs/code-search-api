@@ -24,9 +24,31 @@ from pydantic import BaseModel, Field
 # Config
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("CODE_SEARCH_DB", "./code_index.db")).expanduser()
-WORKSPACE = Path(os.environ.get("CODE_SEARCH_WORKSPACE", "./repos")).expanduser()
+_workspace_dir = os.environ.get("CODE_SEARCH_WORKSPACE", "./repos")
+WORKSPACE = Path(_workspace_dir).expanduser() if _workspace_dir else None
 _reference_dir = os.environ.get("CODE_SEARCH_REFERENCE")
 REFERENCE_DIR = Path(_reference_dir).expanduser() if _reference_dir else None
+
+
+def _parse_extra_scan_roots() -> list[tuple[str, Path]]:
+    """Parse CODE_SEARCH_EXTRA_SCAN_ROOTS entries like ``root_id=/abs/path``.
+
+    Entries are separated by ``os.pathsep``. Each root is scanned like the
+    workspace, but its projects are namespaced as ``<root_id>/<dirname>`` so
+    they cannot collide with workspace project names. A bare path (no ``=``)
+    uses the directory's own name as the root id.
+    """
+    raw = os.environ.get("CODE_SEARCH_EXTRA_SCAN_ROOTS", "")
+    roots: list[tuple[str, Path]] = []
+    for entry in [part.strip() for part in raw.split(os.pathsep) if part.strip()]:
+        if "=" in entry:
+            root_id, _, path = entry.partition("=")
+        else:
+            path = entry
+            root_id = Path(path).name
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", root_id.strip()).strip("-") or "root"
+        roots.append((safe_id, Path(path).expanduser()))
+    return roots
 OLLAMA_BASE = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_EMBED_URL = f"{OLLAMA_BASE}/api/embed"
 EMBED_MODEL = os.environ.get("CODE_SEARCH_EMBED_MODEL", "qwen3-embedding:8b")
@@ -671,42 +693,54 @@ def should_skip_dir(name: str) -> bool:
     return name in SKIP_DIRS or name.startswith(".")
 
 
-def scan_project_dirs() -> list[tuple[str, Path, Path]]:
-    """Returns list of (project, project_dir, base_dir) under the scan roots."""
+def scan_project_dirs() -> list[tuple[str, Path]]:
+    """Returns list of (project, project_dir) under the scan roots.
+
+    Workspace and reference projects are named after their directory; extra
+    scan roots namespace theirs as ``<root_id>/<dirname>``.
+    """
     projects = []
-    scan_roots = [WORKSPACE]
-    if REFERENCE_DIR and REFERENCE_DIR.exists():
-        scan_roots.append(REFERENCE_DIR)
-    for base_dir in scan_roots:
+    scan_roots: list[tuple[str | None, Path]] = []
+    if WORKSPACE:
+        scan_roots.append((None, WORKSPACE))
+    if REFERENCE_DIR:
+        scan_roots.append((None, REFERENCE_DIR))
+    scan_roots.extend(_parse_extra_scan_roots())
+    for root_id, base_dir in scan_roots:
         if not base_dir.exists():
             continue
         for project_dir in sorted(base_dir.iterdir()):
             if not project_dir.is_dir() or project_dir.name.startswith("."):
                 continue
-            projects.append((project_dir.name, project_dir, base_dir))
+            project = f"{root_id}/{project_dir.name}" if root_id else project_dir.name
+            projects.append((project, project_dir))
     return projects
 
 
 def collect_files() -> list[tuple[str, str, str]]:
-    """Returns list of (project, relative_path, absolute_path)."""
+    """Returns list of (project, relative_path, absolute_path).
+
+    relative_path is always ``<project>/<path inside the project dir>``, which
+    matches the historical base-dir-relative layout for workspace projects.
+    """
     files = []
-    for project, project_dir, base_dir in scan_project_dirs():
-            for root, dirs, filenames in os.walk(project_dir):
-                dirs[:] = [d for d in dirs if not should_skip_dir(d)]
-                for fname in filenames:
-                    if fname in SKIP_FILES:
-                        continue
-                    fpath = Path(root) / fname
-                    if fpath.suffix not in INDEX_EXTENSIONS:
-                        continue
-                    try:
-                        fsize = fpath.stat().st_size
-                    except OSError:
-                        continue  # broken symlink or permission error
-                    if fsize > MAX_FILE_SIZE:
-                        continue
-                    rel = str(fpath.relative_to(base_dir))
-                    files.append((project, rel, str(fpath)))
+    for project, project_dir in scan_project_dirs():
+        for root, dirs, filenames in os.walk(project_dir):
+            dirs[:] = [d for d in dirs if not should_skip_dir(d)]
+            for fname in filenames:
+                if fname in SKIP_FILES:
+                    continue
+                fpath = Path(root) / fname
+                if fpath.suffix not in INDEX_EXTENSIONS:
+                    continue
+                try:
+                    fsize = fpath.stat().st_size
+                except OSError:
+                    continue  # broken symlink or permission error
+                if fsize > MAX_FILE_SIZE:
+                    continue
+                rel = f"{project}/{fpath.relative_to(project_dir).as_posix()}"
+                files.append((project, rel, str(fpath)))
     return files
 
 
@@ -964,11 +998,11 @@ def perform_index(summarize: bool = True) -> dict[str, Any]:
         # removing them would wipe the rest of the index whenever the
         # workspace changes. Directories (not collected files) define the
         # scope so a project whose files were all deleted still prunes.
-        scanned_projects = {project for project, _, _ in scan_project_dirs()}
+        scanned_prefixes = tuple(f"{project}/" for project, _ in scan_project_dirs())
         deleted_files = {
             path
             for path in all_db_files - current_file_paths
-            if path.split("/", 1)[0] in scanned_projects
+            if path.startswith(scanned_prefixes)
         }
         for deleted_file in deleted_files:
             cursor = conn.execute("DELETE FROM chunks WHERE file_path = ?", (deleted_file,))

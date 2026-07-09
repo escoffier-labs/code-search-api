@@ -280,8 +280,9 @@ CODE_SEARCH_SUMMARY_MODEL=qwen3:32b                  # local, needs ~20GB VRAM
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CODE_SEARCH_WORKSPACE` | `./repos` | Root directory to scan for code |
+| `CODE_SEARCH_WORKSPACE` | `./repos` | Root directory to scan for code. Set to an empty string to disable the workspace root and scan only extra roots. |
 | `CODE_SEARCH_REFERENCE` | *(unset)* | Optional second directory for reference docs |
+| `CODE_SEARCH_EXTRA_SCAN_ROOTS` | *(unset)* | Extra scan roots as `root_id=/abs/path` entries separated by `:` (`os.pathsep`). Projects under an extra root are namespaced `root_id/<dirname>`. |
 | `CODE_SEARCH_DB` | `./code_index.db` | SQLite database path |
 | `CODE_SEARCH_API_KEY` | *(unset)* | API key for protected endpoints. Unset = no auth. |
 | `CODE_SEARCH_CORS_ORIGINS` | `*` | Comma-separated CORS origins |
