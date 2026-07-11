@@ -1,0 +1,86 @@
+{
+  "title": "From repository files to hybrid semantic search",
+  "eyebrow": "CODE-SEARCH-API WORKFLOW",
+  "description": "The indexer stores code vectors and summary vectors, then the API ranks both for behavior-first search.",
+  "meta": "Ollama · SQLite · FastAPI",
+  "columns": [
+    {
+      "title": "SOURCE",
+      "nodes": [
+        {
+          "id": "repos",
+          "label": "code repos",
+          "detail": "workspace files"
+        },
+        {
+          "id": "discover",
+          "label": "file discovery",
+          "detail": "language filters"
+        }
+      ]
+    },
+    {
+      "title": "INDEX",
+      "nodes": [
+        {
+          "id": "chunks",
+          "label": "logical chunks",
+          "detail": "functions · classes",
+          "kind": "accent"
+        },
+        {
+          "id": "summary",
+          "label": "summaries",
+          "detail": "what code does"
+        }
+      ]
+    },
+    {
+      "title": "STORE",
+      "nodes": [
+        {
+          "id": "vectors",
+          "label": "SQLite vectors",
+          "detail": "packed float32",
+          "kind": "focus",
+          "badge": "local"
+        },
+        {
+          "id": "summvec",
+          "label": "summary vectors",
+          "detail": "separate signal"
+        }
+      ]
+    },
+    {
+      "title": "QUERY",
+      "nodes": [
+        {
+          "id": "api",
+          "label": "FastAPI search",
+          "detail": "code · summary · hybrid"
+        },
+        {
+          "id": "results",
+          "label": "ranked results",
+          "detail": "behavior-first matches",
+          "kind": "success"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {"from": "repos", "to": "discover"},
+    {"from": "discover", "to": "chunks"},
+    {"from": "chunks", "to": "vectors"},
+    {"from": "summary", "to": "summvec"},
+    {"from": "vectors", "to": "api"},
+    {"from": "summvec", "to": "api"},
+    {"from": "api", "to": "results", "label": "hybrid"}
+  ],
+  "context": {
+    "title": "LOCAL CONTRACT",
+    "body": "No hosted vector database; embeddings and search stay in your local service.",
+    "detail": "Changing embedding models requires a deliberate re-index."
+  }
+}
