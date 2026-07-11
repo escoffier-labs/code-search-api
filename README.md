@@ -105,28 +105,9 @@ npm run build
 
 ## How It Works
 
-```
-Your code repos
-      │
-      ▼
- File discovery ──► Language-aware chunking (Python, TS, Go, Rust, etc.)
-      │
-      ├──► Embedding via Ollama ──► packed float32 vectors in SQLite
-      │
-      └──► LLM summarization ──► summary + summary embedding in SQLite
-                                        │
-                                        ▼
-                              FastAPI search endpoint
-                                        │
-                              ┌─────────┴─────────┐
-                              │                   │
-                        Code vectors      Summary vectors
-                              │                   │
-                              └────── weighted ────┘
-                                        │
-                                        ▼
-                              Hybrid ranked results
-```
+![Code Search API indexing and search workflow](docs/assets/index-search-workflow.svg)
+
+Generated from [`docs/assets/workflows/index-search.json`](docs/assets/workflows/index-search.json) with `plating workflow`.
 
 1. **Chunking**: Files are split at logical boundaries (function/class definitions, not arbitrary line counts). Python, TypeScript, JavaScript, Go, Rust, Markdown, and config files are all handled with language-specific patterns.
 
