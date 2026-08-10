@@ -236,7 +236,7 @@ CODE_SEARCH_SUMMARY_MODEL=qwen3:32b                  # local, needs ~20GB VRAM
 | `POST` | `/api/index` | Yes | Trigger background indexing run |
 | `POST` | `/api/backfill-summaries` | Yes | Generate summaries for unsummarized chunks |
 | `GET` | `/api/projects` | Yes | Per-project chunk and summary counts |
-| `GET` | `/api/stats` | No | Chunk type breakdown and project coverage |
+| `GET` | `/api/stats` | Yes | Chunk type breakdown and project coverage |
 | `GET` | `/api/summary-stats` | Yes | Summary counts by model |
 
 ### Search request
