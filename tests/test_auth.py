@@ -22,6 +22,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 API_KEY = "test-secret-key"
+METADATA_ENDPOINTS = [
+    ("/api/projects", "projects"),
+    ("/api/stats", "by_project"),
+    ("/api/summary-stats", "total_chunks"),
+]
 
 
 @pytest.fixture()
@@ -112,21 +117,33 @@ def test_query_param_key_is_not_accepted(server_module):
     assert resp_named.status_code == 401
 
 
-def test_readonly_route_open_when_key_unset(server_module):
-    """Read-only endpoints stay open when no key is configured."""
+@pytest.mark.parametrize(("path", "response_key"), METADATA_ENDPOINTS)
+def test_metadata_routes_open_when_key_unset(server_module, path, response_key):
+    """Metadata endpoints stay open when no API key is configured."""
     server_module.CODE_SEARCH_API_KEY = None
     with _client(server_module) as client:
-        resp = client.get("/api/projects")
+        resp = client.get(path)
     # Auth must not block; the handler returns its normal payload.
     assert resp.status_code == 200
-    assert "projects" in resp.json()
+    assert response_key in resp.json()
 
 
-def test_readonly_route_requires_key_when_configured(server_module):
-    """When a key is set, read-only protected routes still validate it."""
+@pytest.mark.parametrize(("path", "response_key"), METADATA_ENDPOINTS)
+def test_metadata_routes_require_valid_key_when_configured(
+    server_module, path, response_key,
+):
+    """Configured API keys protect every project-metadata route."""
     server_module.CODE_SEARCH_API_KEY = API_KEY
     with _client(server_module) as client:
-        no_key = client.get("/api/projects")
-        good_key = client.get("/api/projects", headers={"X-API-Key": API_KEY})
+        no_key = client.get(path)
+        wrong_key = client.get(path, headers={"X-API-Key": "wrong"})
+        x_api_key = client.get(path, headers={"X-API-Key": API_KEY})
+        bearer = client.get(
+            path, headers={"Authorization": f"Bearer {API_KEY}"},
+        )
     assert no_key.status_code == 401
-    assert good_key.status_code == 200
+    assert wrong_key.status_code == 401
+    assert x_api_key.status_code == 200
+    assert bearer.status_code == 200
+    assert response_key in x_api_key.json()
+    assert response_key in bearer.json()

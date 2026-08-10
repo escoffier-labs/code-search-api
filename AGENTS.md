@@ -7,8 +7,8 @@ Read this entire file before changing anything. Every rule is binding.
 ./scripts/verify
 ```
 It runs the `mcp/` gates (`npm run typecheck`, `npm test`, `npm run build`)
-and the Python check (throwaway-venv `pip install -e .`, `code-search-api
---help`, and a loopback serve smoke test against a throwaway
+and the Python checks (throwaway-venv package install, `pytest`,
+`code-search-api --help`, and a loopback serve smoke test against a throwaway
 `CODE_SEARCH_DB`, never port 5204).
 
 A change may be reported complete only when every applicable check below has
@@ -18,10 +18,10 @@ failure verbatim and do not claim success.
   - `npm run typecheck`
   - `npm test`
   - `npm run build`
-- Touched Python (`src/`, `pyproject.toml`)? There is no Python test suite.
-  Smallest real check: `pip install -e .` in a throwaway venv, then run
-  `code-search-api --help` and `code-search-api serve` against a throwaway
-  `CODE_SEARCH_DB`. Never point any check at the production database.
+- Touched Python (`src/`, `pyproject.toml`)? Run the focused Python tests, then
+  `./scripts/verify`, which runs the complete Python suite in a throwaway venv
+  before the CLI and serve smoke checks. Never point any check at the
+  production database.
 - Docs-only change? Verify every command and path named in the file exists.
 
 ## Project Shape

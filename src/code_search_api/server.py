@@ -1313,7 +1313,7 @@ def list_projects() -> dict[str, Any]:
     return {"projects": [dict(r) for r in rows]}
 
 
-@app.get("/api/stats")
+@protected_api.get("/api/stats")
 def stats() -> dict[str, Any]:
     """Detailed stats about chunk types and coverage."""
     with closing(get_conn()) as conn:
