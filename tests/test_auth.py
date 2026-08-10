@@ -130,3 +130,26 @@ def test_readonly_route_requires_key_when_configured(server_module):
         good_key = client.get("/api/projects", headers={"X-API-Key": API_KEY})
     assert no_key.status_code == 401
     assert good_key.status_code == 200
+
+
+def test_stats_route_open_when_key_unset(server_module):
+    """GET /api/stats stays open when no key is configured."""
+    server_module.CODE_SEARCH_API_KEY = None
+    with _client(server_module) as client:
+        resp = client.get("/api/stats")
+    assert resp.status_code == 200
+    assert "by_project" in resp.json()
+
+
+def test_stats_route_requires_key_when_configured(server_module):
+    """GET /api/stats must not leak project metadata without credentials."""
+    server_module.CODE_SEARCH_API_KEY = API_KEY
+    with _client(server_module) as client:
+        no_key = client.get("/api/stats")
+        x_api_key = client.get("/api/stats", headers={"X-API-Key": API_KEY})
+        bearer = client.get(
+            "/api/stats", headers={"Authorization": f"Bearer {API_KEY}"}
+        )
+    assert no_key.status_code == 401
+    assert x_api_key.status_code == 200
+    assert bearer.status_code == 200
