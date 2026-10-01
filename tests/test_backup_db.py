@@ -22,8 +22,12 @@ def run_backup(db: Path, backups: Path) -> str:
 
 
 def make_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
-        conn.execute("create table t (a)")
+    """Create a WAL-mode DB, like the real index."""
+    conn = sqlite3.connect(path)
+    conn.execute("pragma journal_mode=wal")
+    conn.execute("create table t (a)")
+    conn.commit()
+    conn.close()
 
 
 def test_unchanged_db_is_skipped(tmp_path: Path) -> None:
@@ -40,10 +44,11 @@ def test_changed_db_is_backed_up_again(tmp_path: Path) -> None:
     make_db(db)
     run_backup(db, backups)
 
-    with sqlite3.connect(db) as conn:
-        conn.execute("insert into t values (1)")
-    stat = db.stat()
-    os.utime(db, (stat.st_atime, stat.st_mtime + 5))
+    # No mtime bump: a same-second write must still be detected.
+    conn = sqlite3.connect(db)
+    conn.execute("insert into t values (1)")
+    conn.commit()
+    conn.close()
 
     assert "Backed up" in run_backup(db, backups)
 
@@ -55,3 +60,30 @@ def test_missing_stamp_forces_backup(tmp_path: Path) -> None:
     (backups / ".last-source-stamp").unlink()
 
     assert "Backed up" in run_backup(db, backups)
+
+
+def test_pending_wal_forces_backup(tmp_path: Path) -> None:
+    db, backups = tmp_path / "index.db", tmp_path / "backups"
+    make_db(db)
+    run_backup(db, backups)
+
+    writer = sqlite3.connect(db)
+    writer.execute("pragma wal_autocheckpoint=0")
+    writer.execute("insert into t values (2)")
+    writer.commit()
+    try:
+        assert (tmp_path / "index.db-wal").stat().st_size > 0
+        assert "Backed up" in run_backup(db, backups)
+    finally:
+        writer.close()
+
+
+def test_deleted_newest_backup_forces_backup(tmp_path: Path) -> None:
+    db, backups = tmp_path / "index.db", tmp_path / "backups"
+    make_db(db)
+    run_backup(db, backups)
+    for backup in backups.glob("code_index_*.db"):
+        backup.unlink()
+
+    assert "Backed up" in run_backup(db, backups)
+    assert not list(backups.glob("*.tmp"))

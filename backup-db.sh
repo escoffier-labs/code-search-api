@@ -15,29 +15,49 @@ if [ ! -f "$DB_PATH" ]; then
     exit 1
 fi
 
-# Skip when nothing changed since the newest backup: same DB size and mtime,
-# and no pending WAL frames. Each copy is a full 15G file.
+# Skip when nothing changed since the last good backup. Each copy is a full
+# 15G file. The stamp records the source state (size, ns mtime, inode) and the
+# backup file it produced; skip only if that file still exists, the source
+# state matches, and there are no pending WAL frames.
 STAMP_FILE="$BACKUP_DIR/.last-source-stamp"
-WAL_SIZE=$(stat -c %s "$DB_PATH-wal" 2>/dev/null || echo 0)
-STAMP="$(stat -c '%s %Y' "$DB_PATH")"
-NEWEST=$(ls -1t "$BACKUP_DIR"/code_index_*.db 2>/dev/null | head -n 1 || true)
-if [ -n "$NEWEST" ] && [ "$WAL_SIZE" -eq 0 ] && [ -f "$STAMP_FILE" ] \
-    && [ "$(cat "$STAMP_FILE")" = "$STAMP" ]; then
-    echo "Unchanged since $(basename "$NEWEST"); skipping backup"
-    exit 0
+source_state() { stat -c '%s %.9Y %i' "$DB_PATH"; }
+wal_size() { stat -c %s "$DB_PATH-wal" 2>/dev/null || echo 0; }
+
+BEFORE="$(source_state)"
+WAL_BEFORE="$(wal_size)"
+if [ "$WAL_BEFORE" -eq 0 ] && [ -f "$STAMP_FILE" ]; then
+    IFS=$'\t' read -r LAST_STATE LAST_BACKUP < "$STAMP_FILE" || true
+    if [ "${LAST_STATE:-}" = "$BEFORE" ] && [ -n "${LAST_BACKUP:-}" ] \
+        && [ -f "$BACKUP_DIR/$LAST_BACKUP" ]; then
+        echo "Unchanged since $LAST_BACKUP; skipping backup"
+        exit 0
+    fi
 fi
 
-# Use Python sqlite3 backup for consistency (sqlite3 CLI not installed)
+# Use Python sqlite3 backup for consistency (sqlite3 CLI not installed).
+# Write to a temp name and rename on success so a killed run never leaves a
+# truncated file that looks like a valid backup.
+BACKUP_NAME="code_index_$TIMESTAMP.db"
+TMP_BACKUP="$BACKUP_DIR/$BACKUP_NAME.tmp"
+trap 'rm -f "$TMP_BACKUP"' EXIT
+rm -f "$TMP_BACKUP"
 python3 -c "
 import sqlite3, sys
 src = sqlite3.connect('$DB_PATH')
-dst = sqlite3.connect('$BACKUP_DIR/code_index_$TIMESTAMP.db')
+dst = sqlite3.connect('$TMP_BACKUP')
 src.backup(dst)
 dst.close()
 src.close()
 "
-echo "Backed up to $BACKUP_DIR/code_index_$TIMESTAMP.db ($(du -sh "$BACKUP_DIR/code_index_$TIMESTAMP.db" | cut -f1))"
-[ "$WAL_SIZE" -eq 0 ] && echo "$STAMP" > "$STAMP_FILE" || rm -f "$STAMP_FILE"
+mv -f "$TMP_BACKUP" "$BACKUP_DIR/$BACKUP_NAME"
+echo "Backed up to $BACKUP_DIR/$BACKUP_NAME ($(du -sh "$BACKUP_DIR/$BACKUP_NAME" | cut -f1))"
+
+# Record the stamp only if the source did not move during the copy.
+if [ "$WAL_BEFORE" -eq 0 ] && [ "$(wal_size)" -eq 0 ] && [ "$(source_state)" = "$BEFORE" ]; then
+    printf '%s\t%s\n' "$BEFORE" "$BACKUP_NAME" > "$STAMP_FILE"
+else
+    rm -f "$STAMP_FILE"
+fi
 
 # Rotate: keep only the newest MAX_BACKUPS
 cd "$BACKUP_DIR"
