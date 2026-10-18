@@ -233,6 +233,82 @@ See [CHANGELOG.md](./CHANGELOG.md) for notable changes, including the draft-07
 `escoffier-labs/code-search-api/tree/main/mcp`, and the `scripts/verify`
 entrypoint.
 
+## HTTP mode
+
+Run a single process for concurrent MCP clients from the repository root:
+
+```sh
+node mcp/dist/mcp-bin.js --http
+```
+
+Stdio remains the default. Set `CODE_SEARCH_API_URL` and the optional
+`CODE_SEARCH_API_KEY` as usual, plus an independent random bearer token
+(for example, generate one with `openssl rand -hex 32`).
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CODE_SEARCH_MCP_HTTP_TOKEN` | Required | Independent bearer token |
+| `CODE_SEARCH_MCP_HTTP_HOST` | IPv4 loopback | Listener address |
+| `CODE_SEARCH_MCP_HTTP_PORT` | `18819` | Listener port, or `0` for a free port |
+
+Startup refuses a blank token or one matching the upstream API key or URL
+credentials. Token comparison uses SHA-256 and constant-time comparison.
+`/mcp` authenticates every POST, GET, and DELETE request. DELETE terminates an
+MCP session only. The four tools remain read-only with fixed upstream routes.
+There is no destructive API passthrough or arbitrary-URL fetch tool.
+`GET /healthz` returns only `{"status":"ok"}` without authentication.
+
+Host and Origin checks run before authentication. Bodies are limited to 1 MiB,
+request and header timeouts are 30 and 10 seconds, and the listener caps sessions
+at 128. Sessions idle for 30 minutes expire on a one-minute timer. Active tool
+requests are excluded from expiry. SIGTERM and SIGINT close sessions and the
+listener. Clients must initialize again after expiry or restart.
+
+Each session owns a fresh MCP server and API client. There are no module-level
+stats or project caches, pending approvals, deferred tool sets, write flags, or
+shared request queues. Each upstream request retains its own 30-second timeout.
+All clients holding the bearer token share the configured upstream privileges.
+Keep the default loopback binding, or provide a trusted TLS proxy or tunnel
+with network access controls and an allowed Host header for remote access.
+
+### Claude Code
+
+Add an HTTP entry under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "code-search": {
+      "type": "http",
+      "url": "http://localhost:18819/mcp",
+      "headersHelper": "/path/to/helper CODE_SEARCH_MCP_HTTP_TOKEN"
+    }
+  }
+}
+```
+
+The executable helper reads the named environment variable and prints
+`{"Authorization":"Bearer ..."}` to stdout. Keep the token in the helper's
+protected environment rather than in the MCP configuration.
+
+### Codex
+
+Export the same token in the environment that launches Codex:
+
+```toml
+[mcp_servers.code_search]
+url = "http://localhost:18819/mcp"
+bearer_token_env_var = "CODE_SEARCH_MCP_HTTP_TOKEN"
+```
+
+### systemd user service
+
+The example [unit](../docs/systemd/code-search-mcp-http.service) uses generic
+installation paths. Build the repository at the configured location and create
+`%h/.config/code-search-mcp/http.env` with mode `0600`. Include the upstream
+configuration and `CODE_SEARCH_MCP_HTTP_TOKEN` in that file. The unit supplies
+`NoNewPrivileges=true`, `PrivateTmp=true`, and `UMask=0077`.
+
 ## License
 
 MIT
