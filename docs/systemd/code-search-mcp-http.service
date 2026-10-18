@@ -1,0 +1,20 @@
+[Unit]
+Description=Code Search MCP HTTP server
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/code-search-api
+ExecStart=/usr/bin/node /opt/code-search-api/mcp/dist/mcp-bin.js --http
+EnvironmentFile=%h/.config/code-search-mcp/http.env
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target
