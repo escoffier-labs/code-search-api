@@ -21,6 +21,7 @@ def server_module(tmp_path):
         "CODE_SEARCH_DB",
         "CODE_SEARCH_WORKSPACE",
         "CODE_SEARCH_EMBED_MODEL",
+        "CODE_SEARCH_SUMMARY_PROVIDER",
         "CODE_SEARCH_SUMMARY_MODEL",
         "CODE_SEARCH_SUMMARY_FALLBACK",
         "CODE_SEARCH_ALLOW_MODEL_CHANGE",
@@ -29,6 +30,7 @@ def server_module(tmp_path):
     os.environ["CODE_SEARCH_DB"] = str(db_path)
     os.environ["CODE_SEARCH_WORKSPACE"] = str(workspace)
     os.environ["CODE_SEARCH_EMBED_MODEL"] = "test-embed"
+    os.environ["CODE_SEARCH_SUMMARY_PROVIDER"] = "ollama"
     os.environ["CODE_SEARCH_SUMMARY_MODEL"] = "test-summary"
     os.environ["CODE_SEARCH_SUMMARY_FALLBACK"] = "test-summary-fallback"
     os.environ.pop("CODE_SEARCH_ALLOW_MODEL_CHANGE", None)
