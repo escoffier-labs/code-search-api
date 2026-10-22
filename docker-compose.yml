@@ -8,8 +8,12 @@ services:
     environment:
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       CODE_SEARCH_EMBED_MODEL: ${CODE_SEARCH_EMBED_MODEL:-qwen3-embedding:8b}
-      CODE_SEARCH_SUMMARY_MODEL: ${CODE_SEARCH_SUMMARY_MODEL:-qwen3-coder-next:cloud}
-      CODE_SEARCH_SUMMARY_FALLBACK: ${CODE_SEARCH_SUMMARY_FALLBACK:-qwen3-coder-next:cloud}
+      # The container image has no agy or codex CLI, so default to no summaries.
+      # Use a local Ollama model (provider ollama) or run summaries on the host.
+      CODE_SEARCH_SUMMARY_PROVIDER: ${CODE_SEARCH_SUMMARY_PROVIDER:-none}
+      CODE_SEARCH_SUMMARY_MODEL: ${CODE_SEARCH_SUMMARY_MODEL:-}
+      CODE_SEARCH_SUMMARY_FALLBACK: ${CODE_SEARCH_SUMMARY_FALLBACK:-}
+      CODE_SEARCH_SUMMARY_DAILY_CAP: ${CODE_SEARCH_SUMMARY_DAILY_CAP:-500}
       CODE_SEARCH_API_KEY: ${CODE_SEARCH_API_KEY:-}
       CODE_SEARCH_CORS_ORIGINS: ${CODE_SEARCH_CORS_ORIGINS:-*}
       CODE_SEARCH_SUMMARY_WORKERS: ${CODE_SEARCH_SUMMARY_WORKERS:-4}

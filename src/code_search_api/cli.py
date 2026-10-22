@@ -40,7 +40,7 @@ def _index(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2), flush=True)
         total_added += result.get("summaries_added", 0)
         total_failed += result.get("failed", 0)
-        if result.get("chunks_found", 0) == 0 or (
+        if result.get("cap_reached") or result.get("chunks_found", 0) == 0 or (
             result.get("summaries_added", 0) == 0 and result.get("failed", 0) == 0
         ):
             break
@@ -59,7 +59,7 @@ def _summarize(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2), flush=True)
         total_added += result.get("summaries_added", 0)
         total_failed += result.get("failed", 0)
-        if result.get("chunks_found", 0) == 0 or (
+        if result.get("cap_reached") or result.get("chunks_found", 0) == 0 or (
             result.get("summaries_added", 0) == 0 and result.get("failed", 0) == 0
         ):
             break

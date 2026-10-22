@@ -163,42 +163,22 @@ CODE_SEARCH_EMBED_MODEL=qwen3-embedding:8b
 
 Summaries are what make hybrid search work. The summarizer reads each code chunk and writes a 1-2 sentence description of what it *does*. That summary gets its own embedding, so you can find code by describing behavior.
 
-**Be realistic about model quality here.** A tiny quantized local model will produce vague, useless summaries like "This file contains code." That defeats the purpose. You need a model that can actually read code and explain it.
+Summary generation goes through a small provider adapter (`src/code_search_api/summary_provider.py`). Pick a lane with `CODE_SEARCH_SUMMARY_PROVIDER`:
 
-### If you have Ollama Pro (cloud models via Ollama)
+| Provider | Runs | Default model | Notes |
+|----------|------|---------------|-------|
+| `agy` (default) | `agy -p` subprocess (Antigravity CLI, Gemini) | `gemini-3.8-flash-low` | Uses the CLI's own subscription login. No API key is read. |
+| `codex` | `codex exec` subprocess (ChatGPT login) | `gpt-6-luna` | Heavier per-call overhead than `agy`, so batches matter more. |
+| `ollama` | Local Ollama chat model | `qwen3:14b` | Free but needs a capable local model. Ollama cloud models (`:cloud`) are rejected. |
+| `none` | nothing | n/a | Disables summary generation. Search still works on code embeddings. |
 
-Best option for bulk code-search summaries. Our April 2026 code-search gauntlet still put `qwen3-coder-next:cloud` first, with `kimi-k2.6:cloud` as the best tested fallback.
+For `agy` and `codex`, several chunks go into one call (`CODE_SEARCH_SUMMARY_BATCH_SIZE`, default 8) and the model replies with a JSON array. A smoke run of 3 real files produced 3 summaries and embeddings from one `agy` call in about 5 seconds.
 
-| Model | Quality | Speed | Notes |
-|-------|---------|-------|-------|
-| **qwen3-coder-next:cloud** | ★★★★★ | ★★★★★ | Current default. Best balance of clean summaries, speed, and structure. |
-| kimi-k2.6:cloud | ★★★★★ | ★★★★☆ | Best tested fallback. Strong identifier retention, but more verbose. |
-| gemma4:31b-cloud | ★★★☆☆ | ★★☆☆☆ | Clean outputs, but lower key-term retention and severe tail latency on code-search summaries. |
-| deepseek-v4-flash:cloud | ★★★★☆ | ★★★★☆ | Promising candidate, but needs thinking behavior controlled and had worse tail latency. |
-| deepseek-v4-pro:cloud | ★★☆☆☆ | ★☆☆☆☆ | Clean when successful, but rejected for bulk summaries after 7/100 failures, two 180s timeouts, and severe tail latency. |
-| deepseek-v3.2:cloud | ★★★☆☆ | ★★☆☆☆ | Reliable, but slower and lower retention in our backfill gauntlet. |
-| minimax-m2.7:cloud | ★★☆☆☆ | ★★☆☆☆ | Reject for summaries. Too much empty-content or thinking leakage in this workflow. |
+### Daily cap
 
-Recent gauntlet results on the same 100 real code/documentation chunks:
+`CODE_SEARCH_SUMMARY_DAILY_CAP` (default `500`) limits how many chunks are sent to a subscription lane per local day, so a large backlog cannot burn quota unattended. `0` disables generation and a negative value removes the cap. The counter lives in the `meta` table, reserved chunks count even when a call fails, and `GET /api/summary-stats` reports `provider`, `model`, `daily_cap`, and `used_today`. `POST /api/backfill-summaries` and `code-search-api summarize` stop and return `cap_reached: true` once the day's budget is spent; run them again after midnight to continue. The cap does not apply to the local `ollama` provider.
 
-| Model | Success | Median | P95 | Key retention | Decision |
-|-------|--------:|-------:|----:|--------------:|----------|
-| `qwen3-coder-next:cloud` | 100/100 | 1.64s | 3.01s | 0.293 | Primary |
-| `kimi-k2.6:cloud` | 100/100 | 2.59s | 4.76s | 0.296 | Fallback |
-| `deepseek-v4-flash:cloud` | 100/100 | 1.88s | 14.41s | 0.288 | Candidate only |
-| `deepseek-v4-pro:cloud` | 93/100 | 2.29s | 56.24s | 0.218 | Reject |
-| `gemma4:31b-cloud` | 100/100 | 2.16s | 31.11s | 0.247 | Reject |
-
-DeepSeek V4 Pro looked clean when it returned, but the April 28 run had five HTTP 503s, two 180s timeouts, lower identifier retention, and a much worse latency tail than Qwen or Kimi. Do not route bulk summary backfills to it unless a future retry shows materially better reliability.
-
-Ollama Pro supports two auth paths:
-
-- Local CLI and localhost API calls can use `ollama signin`.
-- Direct hosted calls to `https://ollama.com/api` use `OLLAMA_API_KEY`.
-
-Ollama Pro is a $20/month plan with 3 concurrent cloud models and 50x more cloud usage than Free. Ollama documents cloud usage as infrastructure utilization rather than a fixed token cap, with session limits resetting every 5 hours and weekly limits resetting every 7 days.
-
-### If running local models only
+### Local models (`ollama` provider)
 
 You need at least a 14B+ parameter model to get useful code summaries. Anything smaller will hallucinate function names and produce generic descriptions that don't help search.
 
@@ -217,13 +197,14 @@ You need at least a 14B+ parameter model to get useful code summaries. Anything 
 | Heavily quantized (Q2, Q3) | Quality degrades to the point of being worse than no summary |
 | Embedding models | These can't generate text, only vectors |
 
-Set your summary model in `.env`:
+Set the provider and model in `.env`:
 
 ```
-CODE_SEARCH_SUMMARY_MODEL=qwen3-coder-next:cloud    # Ollama Pro
-CODE_SEARCH_SUMMARY_FALLBACK=kimi-k2.6:cloud        # optional cloud fallback
-# or
-CODE_SEARCH_SUMMARY_MODEL=qwen3:32b                  # local, needs ~20GB VRAM
+CODE_SEARCH_SUMMARY_PROVIDER=agy
+CODE_SEARCH_SUMMARY_MODEL=gemini-3.8-flash-low
+# or, fully local
+CODE_SEARCH_SUMMARY_PROVIDER=ollama
+CODE_SEARCH_SUMMARY_MODEL=qwen3:32b                  # needs ~20GB VRAM
 ```
 
 ## API Endpoints
@@ -269,8 +250,12 @@ CODE_SEARCH_SUMMARY_MODEL=qwen3:32b                  # local, needs ~20GB VRAM
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama API base URL |
 | `CODE_SEARCH_EMBED_MODEL` | `qwen3-embedding:8b` | Embedding model |
 | `CODE_SEARCH_ALLOW_MODEL_CHANGE` | *(unset)* | Set to `1` to allow re-stamping an existing DB after changing embedding models |
-| `CODE_SEARCH_SUMMARY_MODEL` | `qwen3-coder-next:cloud` | Primary summarization model |
-| `CODE_SEARCH_SUMMARY_FALLBACK` | `qwen3-coder-next:cloud` | Fallback summarization model |
+| `CODE_SEARCH_SUMMARY_PROVIDER` | `agy` | Summary lane: `agy`, `codex`, `ollama` (local only), or `none` |
+| `CODE_SEARCH_SUMMARY_MODEL` | per provider (`gemini-3.8-flash-low`, `gpt-6-luna`, `qwen3:14b`) | Primary summarization model |
+| `CODE_SEARCH_SUMMARY_FALLBACK` | *(unset)* | Optional second model on the same provider |
+| `CODE_SEARCH_SUMMARY_BATCH_SIZE` | `8` | Chunks per CLI call for `agy` and `codex` |
+| `CODE_SEARCH_SUMMARY_DAILY_CAP` | `500` | Chunks sent to a subscription lane per local day (`0` off, negative unlimited) |
+| `CODE_SEARCH_SUMMARY_TIMEOUT` | `240` | Seconds before a CLI summary call is abandoned |
 | `CODE_SEARCH_SUMMARY_WORKERS` | `4` | Parallel summary generation workers |
 | `CODE_SEARCH_DB_BATCH_SIZE` | `100` | DB write batch size |
 | `CODE_SEARCH_CACHE_TTL_SECONDS` | `3600` | Query embedding cache TTL |

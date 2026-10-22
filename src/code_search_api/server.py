@@ -21,6 +21,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPEx
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from . import summary_provider
+
 # Config
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("CODE_SEARCH_DB", "./code_index.db")).expanduser()
@@ -31,11 +33,26 @@ OLLAMA_BASE = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_EMBED_URL = f"{OLLAMA_BASE}/api/embed"
 EMBED_MODEL = os.environ.get("CODE_SEARCH_EMBED_MODEL", "qwen3-embedding:8b")
 
-# Ollama models for summaries. Non-thinking models only: the chat call caps
-# num_predict at 200, and a thinking model spends that budget on reasoning
-# tokens and returns empty content (qwen3-coder-next is also being retired).
-SUMMARY_MODEL_PRIMARY = os.environ.get("CODE_SEARCH_SUMMARY_MODEL", "gemma4:31b-cloud")
-SUMMARY_MODEL_FALLBACK = os.environ.get("CODE_SEARCH_SUMMARY_FALLBACK", "devstral-2:123b-cloud")
+# Summary lane. "agy" (Gemini via the Antigravity CLI) and "codex" (Codex CLI,
+# ChatGPT login) run as subprocesses and carry their own login, so no API key
+# is read here. "ollama" uses a LOCAL Ollama chat model only (cloud models are
+# rejected). "none" disables summary generation.
+SUMMARY_PROVIDER = os.environ.get("CODE_SEARCH_SUMMARY_PROVIDER", "agy").strip().lower()
+if SUMMARY_PROVIDER not in summary_provider.PROVIDERS:
+    raise RuntimeError(
+        f"CODE_SEARCH_SUMMARY_PROVIDER={SUMMARY_PROVIDER!r} is not one of {summary_provider.PROVIDERS}"
+    )
+SUMMARY_MODEL_PRIMARY = (
+    os.environ.get("CODE_SEARCH_SUMMARY_MODEL") or summary_provider.DEFAULT_MODELS[SUMMARY_PROVIDER]
+)
+# Optional second model on the same provider, tried when the primary fails.
+SUMMARY_MODEL_FALLBACK = os.environ.get("CODE_SEARCH_SUMMARY_FALLBACK", "")
+# Chunks sent to the model per CLI call (agy/codex).
+SUMMARY_BATCH_SIZE = max(1, int(os.environ.get("CODE_SEARCH_SUMMARY_BATCH_SIZE", "8")))
+# Chunks that may be sent to a subscription lane per local day. 0 disables
+# generation, a negative value removes the cap. Not applied to local Ollama.
+SUMMARY_DAILY_CAP = int(os.environ.get("CODE_SEARCH_SUMMARY_DAILY_CAP", "500"))
+SUMMARY_TIMEOUT_SECONDS = float(os.environ.get("CODE_SEARCH_SUMMARY_TIMEOUT", "240"))
 
 # Parallel summary config
 SUMMARY_WORKERS = int(os.environ.get("CODE_SEARCH_SUMMARY_WORKERS", "4"))
@@ -301,7 +318,7 @@ def _artifact_cache_upsert(
 
 
 def _summary_model_candidates() -> list[str]:
-    return list(dict.fromkeys([SUMMARY_MODEL_PRIMARY, SUMMARY_MODEL_FALLBACK]))
+    return [m for m in dict.fromkeys([SUMMARY_MODEL_PRIMARY, SUMMARY_MODEL_FALLBACK]) if m]
 
 
 def _get_cached_summary(
@@ -431,72 +448,6 @@ def embed_text(text: str) -> list[float] | None:
         return None
 
 
-def _build_summary_prompt(content: str, file_path: str) -> str:
-    """Build the summary prompt for a chunk."""
-    ext = Path(file_path).suffix
-    lang = {
-        ".py": "Python", ".ts": "TypeScript", ".tsx": "TypeScript/React",
-        ".js": "JavaScript", ".jsx": "JavaScript/React", ".astro": "Astro",
-        ".css": "CSS", ".html": "HTML", ".sh": "Bash", ".md": "Markdown",
-        ".json": "JSON config", ".yaml": "YAML config", ".yml": "YAML config",
-        ".toml": "TOML config",
-    }.get(ext, "code")
-
-    truncated = content[:3000] if len(content) > 3000 else content
-    return f"""You are indexing code for a semantic search engine. Write a 1-2 sentence summary that would help a developer FIND this code when searching.
-
-Focus on: what it DOES (not what it contains), key function/class/component names, technologies used, and the problem it solves.
-Bad: "This file contains CSS styles for card layouts."
-Good: "Styles the SOC project threat actor cards with animated flow diagrams and responsive grid layout."
-
-File: `{file_path}` ({lang})
-
-```
-{truncated}
-```
-
-Summary (1-2 sentences, no markdown):"""
-
-
-def _summarize_via_ollama_model(prompt: str, model: str | None = None) -> str | None:
-    """Summarize via the configured Ollama chat model."""
-    model = model or SUMMARY_MODEL_PRIMARY
-    try:
-        resp = httpx.post(
-            f"{OLLAMA_BASE}/api/chat",
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-                "options": {"num_predict": 200, "temperature": 0.3},
-            },
-            timeout=90.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        content = data.get("message", {}).get("content", "").strip()
-        return content if content else None
-    except Exception as e:
-        print(f"Ollama summarization failed for {model}: {e}")
-        return None
-
-
-def _summarize_via_ollama_local(prompt: str) -> str | None:
-    """Summarize via a local Ollama model."""
-    resp = httpx.post(
-        f"{OLLAMA_BASE}/api/generate",
-        json={
-            "model": SUMMARY_MODEL_PRIMARY,
-            "prompt": prompt + "\n\nSummary:",
-            "stream": False,
-            "options": {"num_predict": 150, "temperature": 0.3},
-        },
-        timeout=30.0,
-    )
-    resp.raise_for_status()
-    return resp.json().get("response", "").strip()
-
-
 def _truncate_summary(summary: str) -> str:
     """Truncate summary to 250 chars at sentence boundary."""
     if len(summary) > 250:
@@ -507,21 +458,119 @@ def _truncate_summary(summary: str) -> str:
     return summary
 
 
-def summarize_chunk(content: str, file_path: str) -> tuple[str, str] | None:
-    """Generate a 1-2 sentence summary using configured Ollama models with fallback.
-    Returns (summary, model_name) or None."""
-    prompt = _build_summary_prompt(content, file_path)
+def _local_day() -> str:
+    return time.strftime("%Y-%m-%d")
 
-        # Try the primary model first, then fall back if needed.
-    for model in [SUMMARY_MODEL_PRIMARY, SUMMARY_MODEL_FALLBACK]:
+
+def summary_usage_today(conn: sqlite3.Connection) -> int:
+    value = _get_meta(conn, f"summary_usage:{_local_day()}")
+    return int(value) if value else 0
+
+
+def summary_quota_remaining(conn: sqlite3.Connection) -> int | None:
+    """Chunks still allowed today on a capped lane; None means no cap applies."""
+    if SUMMARY_PROVIDER == "none":
+        return 0
+    if SUMMARY_PROVIDER == "ollama" or SUMMARY_DAILY_CAP < 0:
+        return None
+    return max(0, SUMMARY_DAILY_CAP - summary_usage_today(conn))
+
+
+def _reserve_summary_quota(requested: int) -> int:
+    """Atomically reserve up to ``requested`` chunks from today's cap.
+
+    Reserved chunks count as used even if the model call later fails, since the
+    lane was still spent. Returns how many chunks were granted.
+    """
+    if requested <= 0:
+        return 0
+    with closing(get_conn()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         try:
-            summary = _summarize_via_ollama_model(prompt, model)
-            if summary:
-                return (_truncate_summary(summary), model)
-        except Exception as e:
-            print(f"{model} failed for {file_path}: {e}")
+            remaining = summary_quota_remaining(conn)
+            granted = requested if remaining is None else min(requested, remaining)
+            if granted > 0 and remaining is not None:
+                _set_meta(conn, f"summary_usage:{_local_day()}", str(summary_usage_today(conn) + granted))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return granted
 
-    return None
+
+def _summarize_batch(items: list[tuple[str, str]]) -> list[tuple[str, str] | None]:
+    """Run one provider call for (file_path, content) items.
+
+    Returns per-item (summary, model) or None. Respects the daily cap.
+    """
+    results: list[tuple[str, str] | None] = [None] * len(items)
+    granted = _reserve_summary_quota(len(items))
+    if granted < len(items):
+        print(f"Summary daily cap reached ({SUMMARY_DAILY_CAP}/day); skipping {len(items) - granted} chunks")
+    items = items[:granted]
+    if not items:
+        return results
+    for model in _summary_model_candidates():
+        pending = [i for i in range(len(items)) if results[i] is None]
+        if not pending:
+            break
+        try:
+            texts = summary_provider.summarize_items(
+                SUMMARY_PROVIDER,
+                model,
+                [items[i] for i in pending],
+                timeout=SUMMARY_TIMEOUT_SECONDS,
+                ollama_base=OLLAMA_BASE,
+            )
+        except Exception as e:
+            print(f"Summary provider {SUMMARY_PROVIDER}/{model} failed: {e}")
+            continue
+        for idx, text in zip(pending, texts):
+            if text:
+                results[idx] = (_truncate_summary(text), model)
+    return results
+
+
+def summarize_chunk(content: str, file_path: str) -> tuple[str, str] | None:
+    """Generate a 1-2 sentence summary through the configured provider.
+    Returns (summary, model_name) or None."""
+    return _summarize_batch([(file_path, content)])[0]
+
+
+def prefetch_summaries(items: list[tuple[str, str, str]]) -> None:
+    """Fill the summary cache for (content_hash, content, file_path) items in batches.
+
+    One CLI call covers up to SUMMARY_BATCH_SIZE chunks. The per-chunk path
+    then finds each summary in the artifact cache, so callers need no other
+    change. A no-op for the local Ollama provider, which is per-chunk anyway.
+    """
+    if SUMMARY_PROVIDER not in summary_provider.CLI_PROVIDERS or not items:
+        return
+    with closing(get_conn()) as conn:
+        todo = {}
+        for content_hash, content, file_path in items:
+            if content_hash not in todo and _get_cached_summary(conn, content_hash) is None:
+                todo[content_hash] = (file_path, content)
+    entries = list(todo.items())
+    if not entries:
+        return
+    batches = [entries[i : i + SUMMARY_BATCH_SIZE] for i in range(0, len(entries), SUMMARY_BATCH_SIZE)]
+    print(f"Summarizing {len(entries)} chunks in {len(batches)} {SUMMARY_PROVIDER} calls...")
+
+    def _run(batch: list[tuple[str, tuple[str, str]]]) -> None:
+        try:
+            results = _summarize_batch([payload for _, payload in batch])
+            with closing(get_conn()) as conn:
+                for (content_hash, _), result in zip(batch, results):
+                    if result:
+                        summary, model = result
+                        _artifact_cache_upsert(conn, content_hash, model, "summary", summary.encode("utf-8"))
+                conn.commit()
+        except Exception as e:
+            print(f"Summary batch failed: {e}")
+
+    with ThreadPoolExecutor(max_workers=SUMMARY_WORKERS) as executor:
+        list(executor.map(_run, batches))
 
 
 def pack_embedding(emb: list[float]) -> bytes:
@@ -1080,7 +1129,16 @@ def perform_index(summarize: bool = True) -> dict[str, Any]:
         conn.commit()
 
         if summarize and pending_summaries:
+            remaining = summary_quota_remaining(conn)
+            if remaining is not None and len(pending_summaries) > remaining:
+                print(
+                    f"Summary cap: {remaining} left today of {SUMMARY_DAILY_CAP}; "
+                    f"deferring {len(pending_summaries) - remaining} chunks to a later backfill"
+                )
+                pending_summaries = pending_summaries[:remaining]
+        if summarize and pending_summaries:
             print(f"Pass 2: Summarizing {len(pending_summaries)} chunks with {SUMMARY_WORKERS} workers...")
+            prefetch_summaries([(h, c, rp) for rp, _i, h, c in pending_summaries])
 
             def _summarize_and_embed(item):
                 rel_path, chunk_idx, chunk_hash, chunk_content = item
@@ -1189,16 +1247,28 @@ def index_all(background_tasks: BackgroundTasks, summarize: bool = True) -> dict
 def backfill_summaries(limit: int = 100, project: Optional[str] = None) -> dict[str, Any]:
     """Backfill summaries for chunks that have code embeddings but no summary yet."""
     with closing(get_conn()) as conn:
+        remaining = summary_quota_remaining(conn)
+        if remaining is not None and remaining <= 0:
+            return {
+                "chunks_found": 0,
+                "summaries_added": 0,
+                "failed": 0,
+                "duration_seconds": 0.0,
+                "cap_reached": True,
+                "provider": SUMMARY_PROVIDER,
+                "daily_cap": SUMMARY_DAILY_CAP,
+            }
         where = "WHERE embedding IS NOT NULL AND summary IS NULL"
         params: list[Any] = []
         if project:
             where += " AND project = ?"
             params.append(project)
-        params.append(limit)
+        params.append(limit if remaining is None else min(limit, remaining))
 
         rows = conn.execute(
             f"SELECT id, file_path, content, content_hash FROM chunks {where} LIMIT ?", params
         ).fetchall()
+        prefetch_summaries([(r["content_hash"], r["content"], r["file_path"]) for r in rows])
 
         updated = 0
         failed = 0
@@ -1260,46 +1330,6 @@ def backfill_summaries(limit: int = 100, project: Optional[str] = None) -> dict[
 
 
 
-def _summarize_via_ollama_model_with_metrics(prompt: str, model: str, num_predict: int = 500) -> tuple[str | None, float]:
-    """Summarize via a specific Ollama model. Returns (summary, duration_ms)."""
-    t0 = time.time()
-    try:
-        import json
-        resp = httpx.post(
-            f"{OLLAMA_BASE}/api/chat",
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-                "options": {"num_predict": num_predict, "temperature": 0.3},
-            },
-            timeout=120.0,
-        )
-        resp.raise_for_status()
-        
-        # Some Ollama setups return NDJSON-style chunks even with stream=False
-        # Accumulate all content parts defensively
-        content_parts = []
-        for line in resp.text.strip().split('\n'):
-            if line:
-                try:
-                    chunk = json.loads(line)
-                    msg = chunk.get("message", {})
-                    # Skip thinking content, only use final content
-                    text = msg.get("content", "")
-                    if text and not msg.get("thinking"):
-                        content_parts.append(text)
-                except json.JSONDecodeError:
-                    continue
-        
-        full_content = "".join(content_parts).strip()
-        duration_ms = round((time.time() - t0) * 1000, 1)
-        return (full_content, duration_ms)
-    except Exception as e:
-        duration_ms = round((time.time() - t0) * 1000, 1)
-        return (f"ERROR: {e}", duration_ms)
-
-
 @protected_api.get("/api/projects")
 def list_projects() -> dict[str, Any]:
     with closing(get_conn()) as conn:
@@ -1345,11 +1375,16 @@ def summary_stats() -> dict[str, Any]:
         total = conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"]
         summarized = conn.execute("SELECT COUNT(*) as c FROM chunks WHERE summary IS NOT NULL").fetchone()["c"]
         pending = total - summarized
+        used_today = summary_usage_today(conn)
     return {
         "total_chunks": total,
         "summarized": summarized,
         "pending": pending,
         "by_model": {(r["summary_model"] or "unknown"): r["c"] for r in by_model},
+        "provider": SUMMARY_PROVIDER,
+        "model": SUMMARY_MODEL_PRIMARY,
+        "daily_cap": SUMMARY_DAILY_CAP,
+        "used_today": used_today,
     }
 
 
